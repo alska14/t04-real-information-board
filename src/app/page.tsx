@@ -90,6 +90,7 @@ type SimSettings = {
   auto_trading_enabled: boolean;
   max_allocation_pct: number;
   confidence_threshold: number;
+  max_concurrent_positions: number;
   last_run_at: string | null;
   last_run_summary: string | null;
 };
@@ -756,7 +757,9 @@ export default function Home() {
     }
   }
 
-  async function patchSettings(patch: Partial<Pick<SimSettings, "auto_trading_enabled" | "max_allocation_pct" | "confidence_threshold">>) {
+  async function patchSettings(
+    patch: Partial<Pick<SimSettings, "auto_trading_enabled" | "max_allocation_pct" | "confidence_threshold" | "max_concurrent_positions">>
+  ) {
     setSettingsBusy(true);
     try {
       const res = await fetch("/api/sim/settings", {
@@ -1016,6 +1019,19 @@ export default function Home() {
             value={settings?.confidence_threshold ?? 70}
             disabled={settingsBusy || !settings}
             onChange={(e) => patchSettings({ confidence_threshold: Number(e.target.value) })}
+            className="pct-slider"
+          />
+
+          <label htmlFor="max-concurrent">AI 동시 보유 포지션 한도: {settings?.max_concurrent_positions ?? 3}건 (한 주기에 여러 추천안을 동시에 열 수 있음)</label>
+          <input
+            id="max-concurrent"
+            type="range"
+            min={1}
+            max={10}
+            step={1}
+            value={settings?.max_concurrent_positions ?? 3}
+            disabled={settingsBusy || !settings}
+            onChange={(e) => patchSettings({ max_concurrent_positions: Number(e.target.value) })}
             className="pct-slider"
           />
 

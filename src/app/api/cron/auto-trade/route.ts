@@ -104,47 +104,76 @@ export async function POST(request: Request) {
     }
   }
 
-  // 3) 신규 진입 판단
-  const available = await getWalletBalance();
-  if (available > 0) {
+  // 3) 신규 진입 판단 — AI가 매번 최대 3개 추천안을 주므로, 신뢰도 기준을 넘는 것부터
+  //    순서대로 "동시 보유 한도"까지 여러 건을 한 주기에 열 수 있다.
+  let openSlots = Math.max(0, settings.max_concurrent_positions - stillOpen.length);
+  if (openSlots > 0) {
     const options = await getEntryRecommendations(snapshot, performanceSummary);
     if (options && options.length) {
-      const best = options.reduce((a, b) => (b.confidence > a.confidence ? b : a));
-      if (best.confidence >= settings.confidence_threshold) {
-        const usedPct = Math.min(best.pct, settings.max_allocation_pct);
-        const virtualSize = Math.floor(available * (usedPct / 100));
-        if (virtualSize > 0) {
-          const position = await openPosition(
-            best.direction,
-            best.leverage,
-            snapshot.price,
-            best.rationale,
-            virtualSize,
-            best.stopLossPct,
-            best.confidence,
-            "ai_auto"
-          );
-          await logDecision({
-            kind: "entry",
-            positionId: position.id,
-            confidence: best.confidence,
-            rationale: best.rationale,
-            note: `${best.direction === "long" ? "롱" : "숏"}×${best.leverage}, 비중 ${usedPct}%(AI 제안 ${best.pct}%, 상한 ${settings.max_allocation_pct}%), 손절 -${best.stopLossPct}%`,
-          });
-          actions.push(
-            `#${position.id} AI 자동진입 ${best.direction === "long" ? "롱" : "숏"}×${best.leverage} 비중${usedPct}% 손절-${best.stopLossPct}% (신뢰도 ${best.confidence}%): ${best.rationale}`
-          );
-        }
-      } else {
+      const qualifying = options
+        .filter((o) => o.confidence >= settings.confidence_threshold)
+        .sort((a, b) => b.confidence - a.confidence);
+      const rejected = options.filter((o) => o.confidence < settings.confidence_threshold);
+
+      for (const o of rejected) {
         await logDecision({
           kind: "entry_skip",
-          confidence: best.confidence,
-          rationale: best.rationale,
+          confidence: o.confidence,
+          rationale: o.rationale,
           note: `기준(${settings.confidence_threshold}%) 미달로 보류`,
         });
-        actions.push(`진입 보류(최고 신뢰도 ${best.confidence}% < 기준 ${settings.confidence_threshold}%)`);
+      }
+
+      for (const best of qualifying) {
+        if (openSlots <= 0) {
+          await logDecision({
+            kind: "entry_skip",
+            confidence: best.confidence,
+            rationale: best.rationale,
+            note: `동시 보유 한도(${settings.max_concurrent_positions}건) 도달로 보류`,
+          });
+          continue;
+        }
+        const available = await getWalletBalance();
+        const usedPct = Math.min(best.pct, settings.max_allocation_pct);
+        const virtualSize = Math.floor(available * (usedPct / 100));
+        if (virtualSize <= 0) {
+          await logDecision({
+            kind: "entry_skip",
+            confidence: best.confidence,
+            rationale: best.rationale,
+            note: "가용 자금 부족으로 보류",
+          });
+          continue;
+        }
+        const position = await openPosition(
+          best.direction,
+          best.leverage,
+          snapshot.price,
+          best.rationale,
+          virtualSize,
+          best.stopLossPct,
+          best.confidence,
+          "ai_auto"
+        );
+        openSlots -= 1;
+        await logDecision({
+          kind: "entry",
+          positionId: position.id,
+          confidence: best.confidence,
+          rationale: best.rationale,
+          note: `${best.direction === "long" ? "롱" : "숏"}×${best.leverage}, 비중 ${usedPct}%(AI 제안 ${best.pct}%, 상한 ${settings.max_allocation_pct}%), 손절 -${best.stopLossPct}%`,
+        });
+        actions.push(
+          `#${position.id} AI 자동진입 ${best.direction === "long" ? "롱" : "숏"}×${best.leverage} 비중${usedPct}% 손절-${best.stopLossPct}% (신뢰도 ${best.confidence}%): ${best.rationale}`
+        );
       }
     }
+  } else if (stillOpen.length > 0) {
+    await logDecision({
+      kind: "entry_skip",
+      note: `동시 보유 한도(${settings.max_concurrent_positions}건) 이미 도달`,
+    });
   }
 
   const summary = actions.length ? actions.join(" | ") : "이번 주기엔 조건을 만족한 거래 없음";

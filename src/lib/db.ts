@@ -93,10 +93,12 @@ export function ensureSchema(): Promise<void> {
           auto_trading_enabled boolean NOT NULL DEFAULT false,
           max_allocation_pct integer NOT NULL DEFAULT 25,
           confidence_threshold integer NOT NULL DEFAULT 70,
+          max_concurrent_positions integer NOT NULL DEFAULT 3,
           last_run_at timestamptz,
           last_run_summary text
         )
       `;
+      await sql`ALTER TABLE sim_settings ADD COLUMN IF NOT EXISTS max_concurrent_positions integer NOT NULL DEFAULT 3`;
       await sql`INSERT INTO sim_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`;
     })();
   }
@@ -309,6 +311,7 @@ export interface SimSettings {
   auto_trading_enabled: boolean;
   max_allocation_pct: number;
   confidence_threshold: number;
+  max_concurrent_positions: number;
   last_run_at: string | null;
   last_run_summary: string | null;
 }
@@ -323,6 +326,7 @@ export async function updateSimSettings(patch: {
   auto_trading_enabled?: boolean;
   max_allocation_pct?: number;
   confidence_threshold?: number;
+  max_concurrent_positions?: number;
 }): Promise<SimSettings> {
   await ensureSchema();
   const current = await getSimSettings();
@@ -331,7 +335,8 @@ export async function updateSimSettings(patch: {
     UPDATE sim_settings
     SET auto_trading_enabled = ${merged.auto_trading_enabled},
         max_allocation_pct = ${merged.max_allocation_pct},
-        confidence_threshold = ${merged.confidence_threshold}
+        confidence_threshold = ${merged.confidence_threshold},
+        max_concurrent_positions = ${merged.max_concurrent_positions}
     WHERE id = 1
     RETURNING *
   `) as unknown as SimSettings[];
