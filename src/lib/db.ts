@@ -46,6 +46,21 @@ export function ensureSchema(): Promise<void> {
           PRIMARY KEY (signal_id, record_date)
         )
       `;
+      await sql`
+        CREATE TABLE IF NOT EXISTS sim_positions (
+          id serial PRIMARY KEY,
+          direction text NOT NULL CHECK (direction IN ('long', 'short')),
+          leverage integer NOT NULL CHECK (leverage BETWEEN 1 AND 10),
+          entry_price double precision NOT NULL,
+          entry_at timestamptz NOT NULL DEFAULT now(),
+          virtual_size double precision NOT NULL DEFAULT 1000000,
+          status text NOT NULL DEFAULT 'open',
+          close_price double precision,
+          close_at timestamptz,
+          close_reason text,
+          rationale text
+        )
+      `;
     })();
   }
   return schemaReady;
@@ -220,4 +235,65 @@ export async function resetSignal(signalId: string) {
   await sql`DELETE FROM daily_readings WHERE signal_id = ${signalId}`;
   await sql`DELETE FROM reading_status WHERE signal_id = ${signalId}`;
   await sql`DELETE FROM sealed_receipts WHERE signal_id = ${signalId}`;
+}
+
+export interface SimPosition {
+  id: number;
+  direction: "long" | "short";
+  leverage: number;
+  entry_price: number;
+  entry_at: string;
+  virtual_size: number;
+  status: "open" | "closed" | "liquidated";
+  close_price: number | null;
+  close_at: string | null;
+  close_reason: string | null;
+  rationale: string | null;
+}
+
+export async function getOpenPosition(): Promise<SimPosition | null> {
+  await ensureSchema();
+  const rows = (await sql`
+    SELECT * FROM sim_positions WHERE status = 'open' ORDER BY entry_at DESC LIMIT 1
+  `) as unknown as SimPosition[];
+  return rows[0] ?? null;
+}
+
+export async function listPositionHistory(limit = 20): Promise<SimPosition[]> {
+  await ensureSchema();
+  const rows = (await sql`
+    SELECT * FROM sim_positions WHERE status != 'open' ORDER BY close_at DESC LIMIT ${limit}
+  `) as unknown as SimPosition[];
+  return rows;
+}
+
+export async function openPosition(
+  direction: "long" | "short",
+  leverage: number,
+  entryPrice: number,
+  rationale: string | null
+): Promise<SimPosition> {
+  await ensureSchema();
+  const rows = (await sql`
+    INSERT INTO sim_positions (direction, leverage, entry_price, rationale)
+    VALUES (${direction}, ${leverage}, ${entryPrice}, ${rationale})
+    RETURNING *
+  `) as unknown as SimPosition[];
+  return rows[0];
+}
+
+export async function closePosition(
+  id: number,
+  closePrice: number,
+  reason: "manual" | "liquidation"
+): Promise<void> {
+  await ensureSchema();
+  await sql`
+    UPDATE sim_positions
+    SET status = ${reason === "liquidation" ? "liquidated" : "closed"},
+        close_price = ${closePrice},
+        close_at = now(),
+        close_reason = ${reason}
+    WHERE id = ${id} AND status = 'open'
+  `;
 }
