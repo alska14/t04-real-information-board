@@ -274,6 +274,16 @@ export async function resetSignal(signalId: string) {
   await sql`DELETE FROM sealed_receipts WHERE signal_id = ${signalId}`;
 }
 
+// 실전 자동매매를 켜기 전, 테스트 중 쌓인 포지션·로그·잔고를 깨끗이 지운다.
+// 라이브 정보판(daily_readings 등)이나 T04 채점 데모(fixture replay) 상태는 건드리지 않는다.
+export async function resetSimData(): Promise<void> {
+  await ensureSchema();
+  await sql`DELETE FROM sim_positions`;
+  await sql`DELETE FROM sim_decision_log`;
+  await sql`UPDATE sim_wallet SET balance = 10000000 WHERE id = 1`;
+  await sql`UPDATE sim_settings SET last_run_at = NULL, last_run_summary = NULL WHERE id = 1`;
+}
+
 export interface SimPosition {
   id: number;
   direction: "long" | "short";

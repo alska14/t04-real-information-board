@@ -771,6 +771,20 @@ export default function Home() {
     }
   }
 
+  async function resetSimAll() {
+    if (!window.confirm("시뮬레이터의 잔고·보유/청산 기록·AI 판단 로그를 모두 지웁니다. 자동매매 설정(ON/OFF, 상한 등)은 유지됩니다. 계속할까요?")) {
+      return;
+    }
+    setSettingsBusy(true);
+    try {
+      await fetch("/api/sim/reset", { method: "POST" });
+      setAdvice(null);
+      await Promise.all([loadSim(), loadDecisionLog(), loadSettings()]);
+    } finally {
+      setSettingsBusy(false);
+    }
+  }
+
   const cur = live?.current;
   const liveDisplayValue = useCountUp(cur?.normalized_value ?? null);
   const statsDisplayPrice = useCountUp(stats?.price ?? null, 500);
@@ -934,6 +948,12 @@ export default function Home() {
       <Panel title="④ AI 모의투자 시뮬레이터 (오락용)" subtitle="가상 총자산 안에서 비중을 골라 여러 건 동시에 굴리는 게임입니다. 실제 투자 조언이 아니며 실제 거래는 없습니다.">
         <div className="disclaimer">
           ⚠ 이 섹션은 재미를 위한 시뮬레이션입니다. AI 추천은 실제 금융 조언이 아니며, 실제 자금 거래를 발생시키지 않습니다.
+        </div>
+
+        <div className="demo-toolbar">
+          <button className="btn ghost" onClick={resetSimAll} disabled={settingsBusy}>
+            {settingsBusy ? "초기화 중…" : "시뮬레이터 전체 초기화(잔고·기록·로그)"}
+          </button>
         </div>
 
         {wallet && (
