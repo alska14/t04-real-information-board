@@ -905,23 +905,7 @@ export default function Home() {
       <div id="panel-chart" role="tabpanel" aria-labelledby="tab-chart" hidden={activeTab !== "chart"}>
       <Panel title="② 7일 추세 & 24시간 통계" subtitle="30초마다 자동 새로고침됩니다. 그래프·통계는 채점 저장소와 분리된 참고용입니다.">
         <div className="live-card">
-          <Sparkline
-            points={stats?.sparkline7d ?? []}
-            positions={openPositions.map((p) => ({
-              id: p.id,
-              entryPrice: p.entry_price,
-              direction: p.direction,
-              stopLossPrice:
-                p.stop_loss_pct != null
-                  ? p.direction === "long"
-                    ? p.entry_price * (1 - p.stop_loss_pct / 100)
-                    : p.entry_price * (1 + p.stop_loss_pct / 100)
-                  : null,
-            }))}
-          />
-          {openPositions.length > 0 && (
-            <p className="hint">점선은 현재 보유 중인 포지션의 진입가·손절선입니다 (번호는 포지션 ID).</p>
-          )}
+          <Sparkline points={stats?.sparkline7d ?? []} />
           <div className="stat-grid">
             <div className="stat-tile">
               <span className="stat-label">현재가</span>
