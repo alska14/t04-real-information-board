@@ -176,7 +176,7 @@ function closedPnlAmount(h: SimPosition): number | null {
 function StatusBadge({ status }: { status: Status }) {
   if (!status) {
     return (
-      <span className="badge badge-dim" role="status" aria-live="polite">
+      <span className="badge badge-dim" role="status" aria-live="polite" aria-atomic="true">
         아직 조회 안 함
       </span>
     );
@@ -184,13 +184,13 @@ function StatusBadge({ status }: { status: Status }) {
   const key = `${status.freshness}-${status.error_code}-${status.sequence}`;
   if (status.freshness === "fresh") {
     return (
-      <span key={key} className="badge badge-fresh pulse" role="status" aria-live="polite">
+      <span key={key} className="badge badge-fresh pulse" role="status" aria-live="polite" aria-atomic="true">
         fresh · 정상
       </span>
     );
   }
   return (
-    <span key={key} className="badge badge-stale pulse" role="status" aria-live="polite">
+    <span key={key} className="badge badge-stale pulse" role="status" aria-live="polite" aria-atomic="true">
       stale(오래된 값) · {ERROR_LABEL[status.error_code] ?? status.error_code}
     </span>
   );

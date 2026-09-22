@@ -1,44 +1,51 @@
 @import "tailwindcss";
 
+/* ui-ux-pro-max 디자인 시스템: Minimalism & Swiss Style / fintech-trading 팔레트 (Inter) */
 :root,
 :root[data-theme="dark"] {
-  --bg: #0b0f14;
-  --panel: #121821;
-  --panel-2: #171f2b;
-  --border: #263140;
-  --text: #e8edf3;
-  --text-dim: #93a1b3;
-  --accent: #4da3ff;
-  --fresh: #34d399;
+  --bg: #0f172a;
+  --panel: #222735;
+  --panel-2: #272f42;
+  --border: #334155;
+  --text: #f8fafc;
+  --text-dim: #94a3b8;
+  --accent: #f59e0b;
+  --accent-ink: #0f172a;
+  --fresh: #4caf50;
   --stale: #fbbf24;
-  --error: #f87171;
+  --error: #ef4444;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.55);
 }
 
 :root[data-theme="light"] {
-  --bg: #f6f8fb;
+  --bg: #f5f6fa;
   --panel: #ffffff;
-  --panel-2: #eef2f7;
-  --border: #d7dee6;
-  --text: #10161f;
-  --text-dim: #4c5867;
-  --accent: #1d5fd6;
-  --fresh: #067a55;
-  --stale: #9a5b00;
-  --error: #c92c2c;
+  --panel-2: #eef1f6;
+  --border: #d9dee6;
+  --text: #0f172a;
+  --text-dim: #526078;
+  --accent: #b45309;
+  --accent-ink: #ffffff;
+  --fresh: #1a7f37;
+  --stale: #92600a;
+  --error: #c02626;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 20px -14px rgba(15, 23, 42, 0.25);
 }
 
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --bg: #f6f8fb;
+    --bg: #f5f6fa;
     --panel: #ffffff;
-    --panel-2: #eef2f7;
-    --border: #d7dee6;
-    --text: #10161f;
-    --text-dim: #4c5867;
-    --accent: #1d5fd6;
-    --fresh: #067a55;
-    --stale: #9a5b00;
-    --error: #c92c2c;
+    --panel-2: #eef1f6;
+    --border: #d9dee6;
+    --text: #0f172a;
+    --text-dim: #526078;
+    --accent: #b45309;
+    --accent-ink: #ffffff;
+    --fresh: #1a7f37;
+    --stale: #92600a;
+    --error: #c02626;
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 20px -14px rgba(15, 23, 42, 0.25);
   }
 }
 
@@ -50,9 +57,11 @@ html,
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", sans-serif;
+  font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", sans-serif;
   margin: 0;
   transition: background-color 0.2s ease, color 0.2s ease;
+  font-size: 16px;
+  line-height: 1.5;
 }
 
 body {
@@ -78,7 +87,7 @@ body {
 
 ::selection {
   background: var(--accent);
-  color: #04101f;
+  color: var(--accent-ink);
 }
 
 .page {
@@ -137,6 +146,7 @@ body {
   font-weight: 600;
   white-space: nowrap;
   cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease;
 }
 
 .tab:hover {
@@ -152,11 +162,14 @@ body {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 16px;
-  padding: 20px;
+  padding: 18px;
+  box-shadow: var(--shadow);
 }
 
 .panel-header h2 {
   font-size: 1.1rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin: 0 0 4px;
 }
 
@@ -319,11 +332,15 @@ tbody tr:last-child td {
   font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  transition: filter 0.15s ease;
+  transition: filter 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .btn:hover:not(:disabled) {
   filter: brightness(1.15);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .btn:disabled {
@@ -334,8 +351,9 @@ tbody tr:last-child td {
 .btn.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #04101f;
+  color: var(--accent-ink);
   align-self: flex-start;
+  box-shadow: 0 4px 14px -6px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 .btn.ghost {
