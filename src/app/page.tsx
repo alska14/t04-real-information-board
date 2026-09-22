@@ -412,7 +412,7 @@ function Sparkline({
             </>
           )}
           <line x1="0" y1={y(p.entryPrice)} x2={chartW} y2={y(p.entryPrice)} stroke="var(--accent)" strokeWidth="1.3" strokeDasharray="5 3" />
-          <circle cx={chartW} cy={y(p.entryPrice)} r="3" fill="var(--accent)" />
+          <circle cx={Math.max(3, chartW - 3)} cy={y(p.entryPrice)} r="3.5" fill="var(--accent)" />
           {!compact && (
             <text x={chartW + 4} y={clampY(y(p.entryPrice)) + 3} fontSize="9" fill="var(--accent)">
               #{p.id} 진입
@@ -421,6 +421,97 @@ function Sparkline({
         </g>
       ))}
     </svg>
+  );
+}
+
+// 손익 숫자를 매 폴링마다 스냅되지 않고 부드럽게 카운트업시켜서 "멈춰 보임"을 없앤다.
+function PositionCard({
+  pos,
+  sparkline,
+  onClose,
+  busy,
+}: {
+  pos: SimPosition;
+  sparkline: number[];
+  onClose: (id: number) => void;
+  busy: number | "advice" | null;
+}) {
+  const displayPnlAmount = useCountUp(pos.pnl_amount ?? null, 500);
+  const displayPnlPct = useCountUp(pos.pnl_pct ?? null, 500);
+  const displayCurrentPrice = useCountUp(pos.current_price ?? null, 500);
+
+  return (
+    <div className="position-card">
+      <div className="position-card-head">
+        <div>
+          <div className="position-card-title">
+            {pos.direction === "long" ? "롱" : "숏"} × {pos.leverage}
+          </div>
+          <div className="hint">진입가 {fmtKrw(pos.entry_price)}</div>
+        </div>
+        <span className={`badge badge-sm ${pos.opened_by === "ai_auto" ? "badge-ai" : "badge-dim"}`}>
+          {pos.opened_by === "ai_auto" ? "AI" : "수동"}
+        </span>
+      </div>
+
+      {displayPnlAmount != null && (
+        <div className={`delta ${displayPnlAmount >= 0 ? "up" : "down"}`} role="status" aria-live="polite">
+          {displayPnlAmount >= 0 ? "+" : ""}
+          {fmtKrw(Math.round(displayPnlAmount))} KRW ({(displayPnlPct ?? 0).toFixed(2)}%)
+        </div>
+      )}
+
+      <Sparkline
+        points={sparkline}
+        height={64}
+        compact
+        positions={[
+          {
+            id: pos.id,
+            entryPrice: pos.entry_price,
+            direction: pos.direction,
+            stopLossPrice:
+              pos.stop_loss_pct != null
+                ? pos.direction === "long"
+                  ? pos.entry_price * (1 - pos.stop_loss_pct / 100)
+                  : pos.entry_price * (1 + pos.stop_loss_pct / 100)
+                : null,
+            liquidationPrice: pos.liquidation_price ?? null,
+          },
+        ]}
+      />
+
+      <dl className="meta-grid meta-grid-compact">
+        <dt>현재가</dt>
+        <dd className="mono">{fmtKrw(displayCurrentPrice != null ? Math.round(displayCurrentPrice) : null)}</dd>
+        <dt>청산가</dt>
+        <dd className="mono">{fmtKrw(pos.liquidation_price)}</dd>
+        <dt>규모</dt>
+        <dd className="mono">{fmtKrw(pos.virtual_size)}</dd>
+        {pos.stop_loss_pct != null && (
+          <>
+            <dt>손절</dt>
+            <dd>-{pos.stop_loss_pct}%</dd>
+          </>
+        )}
+        {pos.entry_confidence != null && (
+          <>
+            <dt>신뢰도</dt>
+            <dd>{pos.entry_confidence}%</dd>
+          </>
+        )}
+      </dl>
+
+      {pos.rationale && (
+        <p className="position-card-rationale" title={pos.rationale}>
+          {pos.rationale}
+        </p>
+      )}
+
+      <button className="btn ghost btn-sm" onClick={() => onClose(pos.id)} disabled={busy !== null}>
+        {busy === pos.id ? "처리 중…" : "지금 청산"}
+      </button>
+    </div>
   );
 }
 
@@ -1160,86 +1251,13 @@ export default function Home() {
         ) : (
           <div className="positions-grid">
             {openPositions.map((pos) => (
-              <div className="position-card" key={pos.id}>
-                <div className="position-card-head">
-                  <div>
-                    <div className="position-card-title">
-                      {pos.direction === "long" ? "롱" : "숏"} × {pos.leverage}
-                    </div>
-                    <div className="hint">진입가 {fmtKrw(pos.entry_price)}</div>
-                  </div>
-                  <span className={`badge badge-sm ${pos.opened_by === "ai_auto" ? "badge-ai" : "badge-dim"}`}>
-                    {pos.opened_by === "ai_auto" ? "AI" : "수동"}
-                  </span>
-                </div>
-
-                {pos.pnl_amount != null && (
-                  <div
-                    key={Math.round(pos.pnl_amount)}
-                    className={`delta pulse ${pos.pnl_amount >= 0 ? "up" : "down"}`}
-                    role="status"
-                    aria-live="polite"
-                  >
-                    {pos.pnl_amount >= 0 ? "+" : ""}
-                    {fmtKrw(Math.round(pos.pnl_amount))} KRW ({pos.pnl_pct?.toFixed(2)}%)
-                  </div>
-                )}
-
-                <Sparkline
-                  points={stats?.sparkline7d ?? []}
-                  height={64}
-                  compact
-                  positions={[
-                    {
-                      id: pos.id,
-                      entryPrice: pos.entry_price,
-                      direction: pos.direction,
-                      stopLossPrice:
-                        pos.stop_loss_pct != null
-                          ? pos.direction === "long"
-                            ? pos.entry_price * (1 - pos.stop_loss_pct / 100)
-                            : pos.entry_price * (1 + pos.stop_loss_pct / 100)
-                          : null,
-                      liquidationPrice: pos.liquidation_price ?? null,
-                    },
-                  ]}
-                />
-
-                <dl className="meta-grid meta-grid-compact">
-                  <dt>현재가</dt>
-                  <dd className="mono">{fmtKrw(pos.current_price)}</dd>
-                  <dt>청산가</dt>
-                  <dd className="mono">{fmtKrw(pos.liquidation_price)}</dd>
-                  <dt>규모</dt>
-                  <dd className="mono">{fmtKrw(pos.virtual_size)}</dd>
-                  {pos.stop_loss_pct != null && (
-                    <>
-                      <dt>손절</dt>
-                      <dd>-{pos.stop_loss_pct}%</dd>
-                    </>
-                  )}
-                  {pos.entry_confidence != null && (
-                    <>
-                      <dt>신뢰도</dt>
-                      <dd>{pos.entry_confidence}%</dd>
-                    </>
-                  )}
-                </dl>
-
-                {pos.rationale && (
-                  <p className="position-card-rationale" title={pos.rationale}>
-                    {pos.rationale}
-                  </p>
-                )}
-
-                <button
-                  className="btn ghost btn-sm"
-                  onClick={() => closePositionById(pos.id)}
-                  disabled={simBusy !== null}
-                >
-                  {simBusy === pos.id ? "처리 중…" : "지금 청산"}
-                </button>
-              </div>
+              <PositionCard
+                key={pos.id}
+                pos={pos}
+                sparkline={stats?.sparkline7d ?? []}
+                onClose={closePositionById}
+                busy={simBusy}
+              />
             ))}
           </div>
         )}
