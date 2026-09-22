@@ -287,95 +287,93 @@ function DailyTable({ rows }: { rows: Row[] }) {
   );
 }
 
-function Sparkline({ points }: { points: number[] }) {
-  if (!points || points.length < 2) return <p className="empty">차트 데이터가 아직 없습니다.</p>;
-  const w = 600;
-  const h = 140;
-  const min = Math.min(...points);
-  const max = Math.max(...points);
-  const range = max - min || 1;
-  const step = w / (points.length - 1);
-  const coords = points.map((p, i) => `${(i * step).toFixed(1)},${(h - ((p - min) / range) * h).toFixed(1)}`);
-  const up = points[points.length - 1] >= points[0];
-  const areaPath = `M0,${h} L${coords.join(" L")} L${w},${h} Z`;
-  const linePath = `M${coords.join(" L")}`;
-  const color = up ? "var(--fresh)" : "var(--error)";
-
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="sparkline" preserveAspectRatio="none" role="img" aria-label="7일 가격 추세">
-      <path d={areaPath} fill={color} opacity="0.12" />
-      <path d={linePath} fill="none" stroke={color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-// 포지션 보유 중 실시간 가격 흐름 + 진입가 기준선. 방향에 맞게 기준선 위/아래 색을 다르게 표시한다.
-function LivePositionChart({
-  points,
-  entryPrice,
-  direction,
-  entryLabel,
-  stopLossPrice,
-  liquidationPrice: liqPrice,
-}: {
-  points: number[];
+type PositionMarker = {
+  id: number;
   entryPrice: number;
   direction: "long" | "short";
-  entryLabel: string;
-  stopLossPrice?: number | null;
+  stopLossPrice: number | null;
   liquidationPrice?: number | null;
+};
+
+function Sparkline({
+  points,
+  positions,
+  height,
+}: {
+  points: number[];
+  positions?: PositionMarker[];
+  height?: number;
 }) {
-  if (points.length < 2) return <p className="empty">실시간 데이터를 모으는 중…</p>;
+  if (!points || points.length < 2) return <p className="empty">차트 데이터가 아직 없습니다.</p>;
   const w = 600;
-  const h = 120;
-  const rightPad = 46;
+  const h = height ?? 140;
+  const rightPad = positions && positions.length ? 46 : 0;
   const chartW = w - rightPad;
-  const allValues = [...points, entryPrice];
-  if (stopLossPrice != null) allValues.push(stopLossPrice);
-  if (liqPrice != null) allValues.push(liqPrice);
+
+  const markerValues = (positions ?? []).flatMap((p) => [
+    p.entryPrice,
+    ...(p.stopLossPrice != null ? [p.stopLossPrice] : []),
+    ...(p.liquidationPrice != null ? [p.liquidationPrice] : []),
+  ]);
+  const allValues = [...points, ...markerValues];
   const min = Math.min(...allValues);
   const max = Math.max(...allValues);
   const range = max - min || 1;
   const step = chartW / (points.length - 1);
   const y = (v: number) => h - ((v - min) / range) * h;
   const coords = points.map((p, i) => `${(i * step).toFixed(1)},${y(p).toFixed(1)}`);
+  const up = points[points.length - 1] >= points[0];
+  const areaPath = `M0,${h} L${coords.join(" L")} L${chartW},${h} Z`;
   const linePath = `M${coords.join(" L")}`;
-  const current = points[points.length - 1];
-  const inProfit = direction === "long" ? current >= entryPrice : current <= entryPrice;
-  const color = inProfit ? "var(--fresh)" : "var(--error)";
-  const entryY = y(entryPrice);
+  const color = up ? "var(--fresh)" : "var(--error)";
   const clampY = (v: number) => Math.min(h - 4, Math.max(8, v));
 
   return (
-    <svg
-      viewBox={`0 0 ${w} ${h}`}
-      className="sparkline sparkline-sm"
-      preserveAspectRatio="none"
-      role="img"
-      aria-label={`${entryLabel} 진입 타점과 실시간 가격 흐름, 손절/청산 기준선 포함`}
-    >
-      {liqPrice != null && (
-        <>
-          <line x1="0" y1={y(liqPrice)} x2={chartW} y2={y(liqPrice)} stroke="var(--error)" strokeWidth="1" strokeDasharray="2 3" opacity="0.6" />
-          <text x={chartW + 4} y={clampY(y(liqPrice)) + 3} fontSize="9" fill="var(--error)">
-            청산
-          </text>
-        </>
-      )}
-      {stopLossPrice != null && (
-        <>
-          <line x1="0" y1={y(stopLossPrice)} x2={chartW} y2={y(stopLossPrice)} stroke="var(--stale)" strokeWidth="1.2" strokeDasharray="3 3" />
-          <text x={chartW + 4} y={clampY(y(stopLossPrice)) + 3} fontSize="9" fill="var(--stale)">
-            손절
-          </text>
-        </>
-      )}
-      <line x1="0" y1={entryY} x2={chartW} y2={entryY} stroke="var(--accent)" strokeWidth="1.2" strokeDasharray="4 4" />
-      <text x={chartW + 4} y={clampY(entryY) + 3} fontSize="9" fill="var(--accent)">
-        {entryLabel}
-      </text>
+    <svg viewBox={`0 0 ${w} ${h}`} className="sparkline" preserveAspectRatio="none" role="img" aria-label="7일 가격 추세, 보유 중인 포지션의 진입·손절선 포함">
+      <path d={areaPath} fill={color} opacity="0.12" />
       <path d={linePath} fill="none" stroke={color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={0} cy={entryY} r="3" fill="var(--accent)" />
+      {(positions ?? []).map((p) => (
+        <g key={p.id}>
+          {p.liquidationPrice != null && (
+            <>
+              <line
+                x1="0"
+                y1={y(p.liquidationPrice)}
+                x2={chartW}
+                y2={y(p.liquidationPrice)}
+                stroke="var(--error)"
+                strokeWidth="1"
+                strokeDasharray="2 3"
+                opacity="0.6"
+              />
+              <text x={chartW + 4} y={clampY(y(p.liquidationPrice)) + 3} fontSize="9" fill="var(--error)">
+                #{p.id} 청산
+              </text>
+            </>
+          )}
+          {p.stopLossPrice != null && (
+            <>
+              <line
+                x1="0"
+                y1={y(p.stopLossPrice)}
+                x2={chartW}
+                y2={y(p.stopLossPrice)}
+                stroke="var(--stale)"
+                strokeWidth="1"
+                strokeDasharray="3 3"
+              />
+              <text x={chartW + 4} y={clampY(y(p.stopLossPrice)) + 3} fontSize="9" fill="var(--stale)">
+                #{p.id} 손절
+              </text>
+            </>
+          )}
+          <line x1="0" y1={y(p.entryPrice)} x2={chartW} y2={y(p.entryPrice)} stroke="var(--accent)" strokeWidth="1.3" strokeDasharray="5 3" />
+          <circle cx={chartW} cy={y(p.entryPrice)} r="3" fill="var(--accent)" />
+          <text x={chartW + 4} y={clampY(y(p.entryPrice)) + 3} fontSize="9" fill="var(--accent)">
+            #{p.id} 진입
+          </text>
+        </g>
+      ))}
     </svg>
   );
 }
@@ -569,29 +567,6 @@ export default function Home() {
     }, 3000);
     return () => clearInterval(fast);
   }, [hasOpenPosition, autoTradingOn, loadSim, loadDecisionLog]);
-
-  // 포지션별 실시간 가격 틱 기록(각자 자기 진입가 기준선을 가진 미니 차트용).
-  const [positionTicksById, setPositionTicksById] = useState<Record<number, number[]>>({});
-
-  useEffect(() => {
-    setPositionTicksById((prev) => {
-      const next: Record<number, number[]> = {};
-      for (const pos of openPositions) {
-        const existing = prev[pos.id];
-        if (!existing) {
-          next[pos.id] = pos.current_price != null ? [pos.entry_price, pos.current_price] : [pos.entry_price];
-        } else {
-          const last = existing[existing.length - 1];
-          next[pos.id] =
-            pos.current_price != null && pos.current_price !== last
-              ? [...existing, pos.current_price].slice(-80)
-              : existing;
-        }
-      }
-      return next;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openPositions]);
 
   const [liveSecondsAgo, setLiveSecondsAgo] = useState(0);
   useEffect(() => {
@@ -930,7 +905,23 @@ export default function Home() {
       <div id="panel-chart" role="tabpanel" aria-labelledby="tab-chart" hidden={activeTab !== "chart"}>
       <Panel title="② 7일 추세 & 24시간 통계" subtitle="30초마다 자동 새로고침됩니다. 그래프·통계는 채점 저장소와 분리된 참고용입니다.">
         <div className="live-card">
-          <Sparkline points={stats?.sparkline7d ?? []} />
+          <Sparkline
+            points={stats?.sparkline7d ?? []}
+            positions={openPositions.map((p) => ({
+              id: p.id,
+              entryPrice: p.entry_price,
+              direction: p.direction,
+              stopLossPrice:
+                p.stop_loss_pct != null
+                  ? p.direction === "long"
+                    ? p.entry_price * (1 - p.stop_loss_pct / 100)
+                    : p.entry_price * (1 + p.stop_loss_pct / 100)
+                  : null,
+            }))}
+          />
+          {openPositions.length > 0 && (
+            <p className="hint">점선은 현재 보유 중인 포지션의 진입가·손절선입니다 (번호는 포지션 ID).</p>
+          )}
           <div className="stat-grid">
             <div className="stat-tile">
               <span className="stat-label">현재가</span>
@@ -1237,19 +1228,23 @@ export default function Home() {
                     </span>
                   </div>
                 </div>
-                <LivePositionChart
-                  points={positionTicksById[pos.id] ?? []}
-                  entryPrice={pos.entry_price}
-                  direction={pos.direction}
-                  entryLabel={`#${pos.id} 진입`}
-                  stopLossPrice={
-                    pos.stop_loss_pct != null
-                      ? pos.direction === "long"
-                        ? pos.entry_price * (1 - pos.stop_loss_pct / 100)
-                        : pos.entry_price * (1 + pos.stop_loss_pct / 100)
-                      : null
-                  }
-                  liquidationPrice={pos.liquidation_price}
+                <Sparkline
+                  points={stats?.sparkline7d ?? []}
+                  height={110}
+                  positions={[
+                    {
+                      id: pos.id,
+                      entryPrice: pos.entry_price,
+                      direction: pos.direction,
+                      stopLossPrice:
+                        pos.stop_loss_pct != null
+                          ? pos.direction === "long"
+                            ? pos.entry_price * (1 - pos.stop_loss_pct / 100)
+                            : pos.entry_price * (1 + pos.stop_loss_pct / 100)
+                          : null,
+                      liquidationPrice: pos.liquidation_price ?? null,
+                    },
+                  ]}
                 />
                 <dl className="meta-grid">
                   <dt>현재가</dt>
