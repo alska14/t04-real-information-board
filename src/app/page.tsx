@@ -337,15 +337,17 @@ function Sparkline({
   points,
   positions,
   height,
+  compact,
 }: {
   points: number[];
   positions?: PositionMarker[];
   height?: number;
+  compact?: boolean;
 }) {
   if (!points || points.length < 2) return <p className="empty">차트 데이터가 아직 없습니다.</p>;
   const w = 600;
   const h = height ?? 140;
-  const rightPad = positions && positions.length ? 46 : 0;
+  const rightPad = positions && positions.length && !compact ? 46 : 0;
   const chartW = w - rightPad;
 
   const markerValues = (positions ?? []).flatMap((p) => [
@@ -384,9 +386,11 @@ function Sparkline({
                 strokeDasharray="2 3"
                 opacity="0.6"
               />
-              <text x={chartW + 4} y={clampY(y(p.liquidationPrice)) + 3} fontSize="9" fill="var(--error)">
-                #{p.id} 청산
-              </text>
+              {!compact && (
+                <text x={chartW + 4} y={clampY(y(p.liquidationPrice)) + 3} fontSize="9" fill="var(--error)">
+                  #{p.id} 청산
+                </text>
+              )}
             </>
           )}
           {p.stopLossPrice != null && (
@@ -400,16 +404,20 @@ function Sparkline({
                 strokeWidth="1"
                 strokeDasharray="3 3"
               />
-              <text x={chartW + 4} y={clampY(y(p.stopLossPrice)) + 3} fontSize="9" fill="var(--stale)">
-                #{p.id} 손절
-              </text>
+              {!compact && (
+                <text x={chartW + 4} y={clampY(y(p.stopLossPrice)) + 3} fontSize="9" fill="var(--stale)">
+                  #{p.id} 손절
+                </text>
+              )}
             </>
           )}
           <line x1="0" y1={y(p.entryPrice)} x2={chartW} y2={y(p.entryPrice)} stroke="var(--accent)" strokeWidth="1.3" strokeDasharray="5 3" />
           <circle cx={chartW} cy={y(p.entryPrice)} r="3" fill="var(--accent)" />
-          <text x={chartW + 4} y={clampY(y(p.entryPrice)) + 3} fontSize="9" fill="var(--accent)">
-            #{p.id} 진입
-          </text>
+          {!compact && (
+            <text x={chartW + 4} y={clampY(y(p.entryPrice)) + 3} fontSize="9" fill="var(--accent)">
+              #{p.id} 진입
+            </text>
+          )}
         </g>
       ))}
     </svg>
@@ -1150,37 +1158,37 @@ export default function Home() {
         {openPositions.length === 0 ? (
           <p className="empty">보유 중인 포지션이 없습니다.</p>
         ) : (
-          <div className="positions-stack">
+          <div className="positions-grid">
             {openPositions.map((pos) => (
-              <div className="live-card" key={pos.id}>
-                <div className="live-value-row">
+              <div className="position-card" key={pos.id}>
+                <div className="position-card-head">
                   <div>
-                    <div className="live-value">
+                    <div className="position-card-title">
                       {pos.direction === "long" ? "롱" : "숏"} × {pos.leverage}
-                      <span className="unit"> 진입가 {fmtKrw(pos.entry_price)}</span>
                     </div>
-                    {pos.pnl_amount != null && (
-                      <div
-                        key={Math.round(pos.pnl_amount)}
-                        className={`delta pulse ${pos.pnl_amount >= 0 ? "up" : "down"}`}
-                        role="status"
-                        aria-live="polite"
-                      >
-                        손익 {pos.pnl_amount >= 0 ? "+" : ""}
-                        {fmtKrw(Math.round(pos.pnl_amount))} KRW ({pos.pnl_pct?.toFixed(2)}%)
-                      </div>
-                    )}
+                    <div className="hint">진입가 {fmtKrw(pos.entry_price)}</div>
                   </div>
-                  <div className="badge-stack">
-                    <span className="badge badge-fresh pulse">보유 중</span>
-                    <span className={`badge ${pos.opened_by === "ai_auto" ? "badge-ai" : "badge-dim"}`}>
-                      {pos.opened_by === "ai_auto" ? "AI 자동 진입" : "수동 진입"}
-                    </span>
-                  </div>
+                  <span className={`badge badge-sm ${pos.opened_by === "ai_auto" ? "badge-ai" : "badge-dim"}`}>
+                    {pos.opened_by === "ai_auto" ? "AI" : "수동"}
+                  </span>
                 </div>
+
+                {pos.pnl_amount != null && (
+                  <div
+                    key={Math.round(pos.pnl_amount)}
+                    className={`delta pulse ${pos.pnl_amount >= 0 ? "up" : "down"}`}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {pos.pnl_amount >= 0 ? "+" : ""}
+                    {fmtKrw(Math.round(pos.pnl_amount))} KRW ({pos.pnl_pct?.toFixed(2)}%)
+                  </div>
+                )}
+
                 <Sparkline
                   points={stats?.sparkline7d ?? []}
-                  height={110}
+                  height={64}
+                  compact
                   positions={[
                     {
                       id: pos.id,
@@ -1196,36 +1204,40 @@ export default function Home() {
                     },
                   ]}
                 />
-                <dl className="meta-grid">
+
+                <dl className="meta-grid meta-grid-compact">
                   <dt>현재가</dt>
-                  <dd className="mono">{fmtKrw(pos.current_price)} KRW</dd>
+                  <dd className="mono">{fmtKrw(pos.current_price)}</dd>
                   <dt>청산가</dt>
-                  <dd className="mono">{fmtKrw(pos.liquidation_price)} KRW</dd>
-                  <dt>진입 규모</dt>
-                  <dd className="mono">{fmtKrw(pos.virtual_size)} KRW</dd>
-                  <dt>진입 시각</dt>
-                  <dd className="mono">{fmtTime(pos.entry_at)}</dd>
+                  <dd className="mono">{fmtKrw(pos.liquidation_price)}</dd>
+                  <dt>규모</dt>
+                  <dd className="mono">{fmtKrw(pos.virtual_size)}</dd>
                   {pos.stop_loss_pct != null && (
                     <>
-                      <dt>손절 기준</dt>
+                      <dt>손절</dt>
                       <dd>-{pos.stop_loss_pct}%</dd>
                     </>
                   )}
                   {pos.entry_confidence != null && (
                     <>
-                      <dt>진입 신뢰도</dt>
+                      <dt>신뢰도</dt>
                       <dd>{pos.entry_confidence}%</dd>
                     </>
                   )}
-                  {pos.rationale && (
-                    <>
-                      <dt>근거</dt>
-                      <dd>{pos.rationale}</dd>
-                    </>
-                  )}
                 </dl>
-                <button className="btn ghost" onClick={() => closePositionById(pos.id)} disabled={simBusy !== null}>
-                  {simBusy === pos.id ? "처리 중…" : "지금 청산(수동)"}
+
+                {pos.rationale && (
+                  <p className="position-card-rationale" title={pos.rationale}>
+                    {pos.rationale}
+                  </p>
+                )}
+
+                <button
+                  className="btn ghost btn-sm"
+                  onClick={() => closePositionById(pos.id)}
+                  disabled={simBusy !== null}
+                >
+                  {simBusy === pos.id ? "처리 중…" : "지금 청산"}
                 </button>
               </div>
             ))}
