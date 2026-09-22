@@ -101,6 +101,9 @@ body {
 
 .theme-toggle {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .hero h1 {
@@ -478,7 +481,18 @@ tbody tr:last-child td {
   border-radius: 10px;
   padding: 10px 14px;
   font-size: 0.8rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.disclaimer {
   margin-bottom: 16px;
+}
+
+.warning-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .apikey-box {

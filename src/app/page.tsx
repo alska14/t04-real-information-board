@@ -243,6 +243,43 @@ function useCountUp(target: number | null, durationMs = 600) {
   return display;
 }
 
+function MoonIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SunIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="4.5" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M12 2.5v2.4M12 19.1v2.4M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.9 19.1l1.7-1.7M17.4 6.6l1.7-1.7"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function WarningIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="warning-icon">
+      <path
+        d="M12 3.5 21.5 20h-19L12 3.5Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path d="M12 9.5v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="12" cy="17" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+
 function Panel({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   return (
     <section className="panel">
@@ -831,7 +868,15 @@ export default function Home() {
           onClick={toggleTheme}
           aria-label={theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환"}
         >
-          {theme === "dark" ? "🌙 다크" : "☀️ 라이트"}
+          {theme === "dark" ? (
+            <>
+              <MoonIcon /> 다크
+            </>
+          ) : (
+            <>
+              <SunIcon /> 라이트
+            </>
+          )}
         </button>
       </header>
 
@@ -962,7 +1007,8 @@ export default function Home() {
       <div id="panel-sim" role="tabpanel" aria-labelledby="tab-sim" hidden={activeTab !== "sim"}>
       <Panel title="④ AI 모의투자 시뮬레이터 (오락용)" subtitle="가상 총자산 안에서 비중을 골라 여러 건 동시에 굴리는 게임입니다. 실제 투자 조언이 아니며 실제 거래는 없습니다.">
         <div className="disclaimer">
-          ⚠ 이 섹션은 재미를 위한 시뮬레이션입니다. AI 추천은 실제 금융 조언이 아니며, 실제 자금 거래를 발생시키지 않습니다.
+          <WarningIcon />
+          <span>이 섹션은 재미를 위한 시뮬레이션입니다. AI 추천은 실제 금융 조언이 아니며, 실제 자금 거래를 발생시키지 않습니다.</span>
         </div>
 
         <div className="demo-toolbar">
