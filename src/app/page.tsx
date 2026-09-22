@@ -314,19 +314,29 @@ function LivePositionChart({
   points,
   entryPrice,
   direction,
+  entryLabel,
+  stopLossPrice,
+  liquidationPrice: liqPrice,
 }: {
   points: number[];
   entryPrice: number;
   direction: "long" | "short";
+  entryLabel: string;
+  stopLossPrice?: number | null;
+  liquidationPrice?: number | null;
 }) {
   if (points.length < 2) return <p className="empty">실시간 데이터를 모으는 중…</p>;
   const w = 600;
-  const h = 100;
+  const h = 120;
+  const rightPad = 46;
+  const chartW = w - rightPad;
   const allValues = [...points, entryPrice];
+  if (stopLossPrice != null) allValues.push(stopLossPrice);
+  if (liqPrice != null) allValues.push(liqPrice);
   const min = Math.min(...allValues);
   const max = Math.max(...allValues);
   const range = max - min || 1;
-  const step = w / (points.length - 1);
+  const step = chartW / (points.length - 1);
   const y = (v: number) => h - ((v - min) / range) * h;
   const coords = points.map((p, i) => `${(i * step).toFixed(1)},${y(p).toFixed(1)}`);
   const linePath = `M${coords.join(" L")}`;
@@ -334,11 +344,38 @@ function LivePositionChart({
   const inProfit = direction === "long" ? current >= entryPrice : current <= entryPrice;
   const color = inProfit ? "var(--fresh)" : "var(--error)";
   const entryY = y(entryPrice);
+  const clampY = (v: number) => Math.min(h - 4, Math.max(8, v));
 
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="sparkline sparkline-sm" preserveAspectRatio="none" role="img" aria-label="포지션 보유 중 실시간 가격 흐름">
-      <line x1="0" y1={entryY} x2={w} y2={entryY} stroke="var(--text-dim)" strokeWidth="1" strokeDasharray="4 4" />
+    <svg
+      viewBox={`0 0 ${w} ${h}`}
+      className="sparkline sparkline-sm"
+      preserveAspectRatio="none"
+      role="img"
+      aria-label={`${entryLabel} 진입 타점과 실시간 가격 흐름, 손절/청산 기준선 포함`}
+    >
+      {liqPrice != null && (
+        <>
+          <line x1="0" y1={y(liqPrice)} x2={chartW} y2={y(liqPrice)} stroke="var(--error)" strokeWidth="1" strokeDasharray="2 3" opacity="0.6" />
+          <text x={chartW + 4} y={clampY(y(liqPrice)) + 3} fontSize="9" fill="var(--error)">
+            청산
+          </text>
+        </>
+      )}
+      {stopLossPrice != null && (
+        <>
+          <line x1="0" y1={y(stopLossPrice)} x2={chartW} y2={y(stopLossPrice)} stroke="var(--stale)" strokeWidth="1.2" strokeDasharray="3 3" />
+          <text x={chartW + 4} y={clampY(y(stopLossPrice)) + 3} fontSize="9" fill="var(--stale)">
+            손절
+          </text>
+        </>
+      )}
+      <line x1="0" y1={entryY} x2={chartW} y2={entryY} stroke="var(--accent)" strokeWidth="1.2" strokeDasharray="4 4" />
+      <text x={chartW + 4} y={clampY(entryY) + 3} fontSize="9" fill="var(--accent)">
+        {entryLabel}
+      </text>
       <path d={linePath} fill="none" stroke={color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={0} cy={entryY} r="3" fill="var(--accent)" />
     </svg>
   );
 }
@@ -1204,6 +1241,15 @@ export default function Home() {
                   points={positionTicksById[pos.id] ?? []}
                   entryPrice={pos.entry_price}
                   direction={pos.direction}
+                  entryLabel={`#${pos.id} 진입`}
+                  stopLossPrice={
+                    pos.stop_loss_pct != null
+                      ? pos.direction === "long"
+                        ? pos.entry_price * (1 - pos.stop_loss_pct / 100)
+                        : pos.entry_price * (1 + pos.stop_loss_pct / 100)
+                      : null
+                  }
+                  liquidationPrice={pos.liquidation_price}
                 />
                 <dl className="meta-grid">
                   <dt>현재가</dt>
