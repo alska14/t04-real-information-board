@@ -132,8 +132,9 @@ const TABS = [
   { id: "live", label: "① 정보판" },
   { id: "chart", label: "② 차트·통계" },
   { id: "news", label: "③ 뉴스" },
-  { id: "sim", label: "④ 시뮬레이터" },
-  { id: "demo", label: "⑤ 채점 데모" },
+  { id: "auto", label: "④ 자동매매" },
+  { id: "manual", label: "⑤ 수동 거래" },
+  { id: "demo", label: "⑥ 채점 데모" },
 ] as const;
 
 const DECISION_KIND_LABEL: Record<string, string> = {
@@ -440,6 +441,10 @@ export default function Home() {
   const [simUpdatedAt, setSimUpdatedAt] = useState<number | null>(null);
   const [settings, setSettings] = useState<SimSettings | null>(null);
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const [draftMaxAlloc, setDraftMaxAlloc] = useState(25);
+  const [draftConfThreshold, setDraftConfThreshold] = useState(70);
+  const [draftMaxConcurrent, setDraftMaxConcurrent] = useState(3);
+  const settingsSeededRef = useRef(false);
   const [decisionLog, setDecisionLog] = useState<DecisionLogRow[]>([]);
   const [apiKey, setApiKey] = useState("");
   const [apiKeyInput, setApiKeyInput] = useState("");
@@ -565,6 +570,17 @@ export default function Home() {
     const json = (await res.json()) as { ok: boolean; settings: SimSettings };
     if (json.ok) setSettings(json.settings);
   }, []);
+
+  // 슬라이더 값은 처음 한 번만 서버 설정으로 채우고, 이후엔 드래그 중 배경 폴링이
+  // 끼어들어 슬라이더를 되돌리지 않도록 로컬 상태를 그대로 둔다.
+  useEffect(() => {
+    if (settings && !settingsSeededRef.current) {
+      setDraftMaxAlloc(settings.max_allocation_pct);
+      setDraftConfThreshold(settings.confidence_threshold);
+      setDraftMaxConcurrent(settings.max_concurrent_positions);
+      settingsSeededRef.current = true;
+    }
+  }, [settings]);
 
   const loadDecisionLog = useCallback(async () => {
     const res = await fetch("/api/sim/log", { cache: "no-store" });
@@ -1004,8 +1020,8 @@ export default function Home() {
       </Panel>
       </div>
 
-      <div id="panel-sim" role="tabpanel" aria-labelledby="tab-sim" hidden={activeTab !== "sim"}>
-      <Panel title="④ AI 모의투자 시뮬레이터 (오락용)" subtitle="가상 총자산 안에서 비중을 골라 여러 건 동시에 굴리는 게임입니다. 실제 투자 조언이 아니며 실제 거래는 없습니다.">
+      <div id="panel-auto" role="tabpanel" aria-labelledby="tab-auto" hidden={activeTab !== "auto"}>
+      <Panel title="④ AI 자동매매 (오락용)" subtitle="가상 총자산 안에서 AI가 신뢰도 기준을 넘는 거래만 스스로 실행합니다. 실제 투자 조언이 아니며 실제 거래는 없습니다.">
         <div className="disclaimer">
           <WarningIcon />
           <span>이 섹션은 재미를 위한 시뮬레이션입니다. AI 추천은 실제 금융 조언이 아니며, 실제 자금 거래를 발생시키지 않습니다.</span>
@@ -1054,42 +1070,51 @@ export default function Home() {
             </span>
           </label>
 
-          <label htmlFor="max-alloc">최대 비중 상한: {settings?.max_allocation_pct ?? 25}% (AI가 이보다 낮게 제안하면 낮은 쪽을 씀)</label>
+          <label htmlFor="max-alloc">최대 비중 상한: {draftMaxAlloc}% (AI가 이보다 낮게 제안하면 낮은 쪽을 씀)</label>
           <input
             id="max-alloc"
             type="range"
             min={10}
             max={100}
             step={5}
-            value={settings?.max_allocation_pct ?? 25}
-            disabled={settingsBusy || !settings}
-            onChange={(e) => patchSettings({ max_allocation_pct: Number(e.target.value) })}
+            value={draftMaxAlloc}
+            disabled={!settings}
+            onChange={(e) => setDraftMaxAlloc(Number(e.target.value))}
+            onMouseUp={(e) => patchSettings({ max_allocation_pct: Number(e.currentTarget.value) })}
+            onTouchEnd={(e) => patchSettings({ max_allocation_pct: Number(e.currentTarget.value) })}
+            onKeyUp={(e) => patchSettings({ max_allocation_pct: Number(e.currentTarget.value) })}
             className="pct-slider"
           />
 
-          <label htmlFor="conf-threshold">AI 신뢰도 기준: {settings?.confidence_threshold ?? 70}% 이상일 때만 자동 실행</label>
+          <label htmlFor="conf-threshold">AI 신뢰도 기준: {draftConfThreshold}% 이상일 때만 자동 실행</label>
           <input
             id="conf-threshold"
             type="range"
             min={1}
             max={100}
             step={1}
-            value={settings?.confidence_threshold ?? 70}
-            disabled={settingsBusy || !settings}
-            onChange={(e) => patchSettings({ confidence_threshold: Number(e.target.value) })}
+            value={draftConfThreshold}
+            disabled={!settings}
+            onChange={(e) => setDraftConfThreshold(Number(e.target.value))}
+            onMouseUp={(e) => patchSettings({ confidence_threshold: Number(e.currentTarget.value) })}
+            onTouchEnd={(e) => patchSettings({ confidence_threshold: Number(e.currentTarget.value) })}
+            onKeyUp={(e) => patchSettings({ confidence_threshold: Number(e.currentTarget.value) })}
             className="pct-slider"
           />
 
-          <label htmlFor="max-concurrent">AI 동시 보유 포지션 한도: {settings?.max_concurrent_positions ?? 3}건 (한 주기에 여러 추천안을 동시에 열 수 있음)</label>
+          <label htmlFor="max-concurrent">AI 동시 보유 포지션 한도: {draftMaxConcurrent}건 (한 주기에 여러 추천안을 동시에 열 수 있음)</label>
           <input
             id="max-concurrent"
             type="range"
             min={1}
             max={10}
             step={1}
-            value={settings?.max_concurrent_positions ?? 3}
-            disabled={settingsBusy || !settings}
-            onChange={(e) => patchSettings({ max_concurrent_positions: Number(e.target.value) })}
+            value={draftMaxConcurrent}
+            disabled={!settings}
+            onChange={(e) => setDraftMaxConcurrent(Number(e.target.value))}
+            onMouseUp={(e) => patchSettings({ max_concurrent_positions: Number(e.currentTarget.value) })}
+            onTouchEnd={(e) => patchSettings({ max_concurrent_positions: Number(e.currentTarget.value) })}
+            onKeyUp={(e) => patchSettings({ max_concurrent_positions: Number(e.currentTarget.value) })}
             className="pct-slider"
           />
 
@@ -1101,129 +1126,6 @@ export default function Home() {
           {!settings?.last_run_at && settings?.auto_trading_enabled && (
             <p className="hint">아직 자동실행 기록 없음 — 외부 크론이 연결되어 있는지 확인하세요.</p>
           )}
-        </div>
-
-        <div className="apikey-box">
-          {apiKeySaved ? (
-            <>
-              <span className="hint">내 OpenAI API 키가 이 브라우저에만 저장되어 있습니다(서버 전송 없음).</span>
-              <button className="btn ghost" onClick={clearApiKey}>
-                키 삭제
-              </button>
-            </>
-          ) : (
-            <>
-              <label htmlFor="openai-key-input" className="sr-only">
-                OpenAI API 키 (선택, 내 브라우저에만 저장됨)
-              </label>
-              <input
-                id="openai-key-input"
-                type="password"
-                autoComplete="off"
-                placeholder="OpenAI API 키 (sk-... , 내 브라우저에만 저장됨)"
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
-              />
-              <button className="btn ghost" onClick={saveApiKey}>
-                저장
-              </button>
-              <span className="hint">키 없이도 규칙 기반 추천으로 사용 가능합니다.</span>
-            </>
-          )}
-        </div>
-
-        <h3 className="subhead">직접 진입용 비중·손절 설정</h3>
-        <div className="manual-entry">
-          <label htmlFor="manual-pct">가용 자금 대비 비중: {manualPct}%</label>
-          <input
-            id="manual-pct"
-            type="range"
-            min={10}
-            max={100}
-            step={5}
-            value={manualPct}
-            onChange={(e) => setManualPct(Number(e.target.value))}
-            className="pct-slider"
-          />
-          <label htmlFor="manual-stoploss" className="sr-only">
-            손절 퍼센트 (선택)
-          </label>
-          <input
-            id="manual-stoploss"
-            type="number"
-            min={1}
-            max={90}
-            placeholder="손절 % (선택, 예: 10)"
-            value={manualStopLoss}
-            onChange={(e) => setManualStopLoss(e.target.value)}
-            className="stoploss-input"
-          />
-        </div>
-        {wallet && (
-          <p className="hint">
-            직접 진입 규모: 약 {fmtKrw(Math.round(wallet.available * (manualPct / 100)))} KRW
-            {manualStopLoss.trim() && ` · 손실 ${manualStopLoss}% 도달 시 자동 청산`}
-          </p>
-        )}
-
-        <div className="demo-toolbar">
-          <button className="btn primary" onClick={requestAdvice} disabled={adviceLoading}>
-            {adviceLoading ? "추천 받는 중…" : "AI 추천 받기"}
-          </button>
-        </div>
-        {adviceMsg && <p className="empty">{adviceMsg}</p>}
-        {advice && (
-          <div className="advice-grid">
-            {advice.map((a, i) => (
-              <div key={i} className="advice-card">
-                <div className={`advice-dir ${a.direction}`}>{a.direction === "long" ? "롱" : "숏"} × {a.leverage}</div>
-                <p className="advice-meta">
-                  비중 {a.pct}% · 손절 -{a.stopLossPct}% · 신뢰도 {a.confidence}%
-                </p>
-                <p>{a.rationale}</p>
-                <button
-                  className="btn success"
-                  onClick={() => enterPosition(a.direction, a.leverage, a.rationale, a.pct, a.stopLossPct, a.confidence)}
-                  disabled={simBusy !== null}
-                >
-                  이 추천안(비중 {a.pct}%)으로 진입
-                </button>
-              </div>
-            ))}
-            {adviceSource && adviceSource !== "openai" && <p className="hint">(규칙 기반 추천을 사용했습니다.)</p>}
-          </div>
-        )}
-
-        <h3 className="subhead">직접 진입</h3>
-        <div className="manual-entry">
-          <label htmlFor="manual-direction" className="sr-only">
-            방향
-          </label>
-          <select
-            id="manual-direction"
-            value={manualDirection}
-            onChange={(e) => setManualDirection(e.target.value as "long" | "short")}
-          >
-            <option value="long">롱(상승 베팅)</option>
-            <option value="short">숏(하락 베팅)</option>
-          </select>
-          <label htmlFor="manual-leverage" className="sr-only">
-            레버리지
-          </label>
-          <select id="manual-leverage" value={manualLeverage} onChange={(e) => setManualLeverage(Number(e.target.value))}>
-            {LEVERAGE_CHOICES.map((l) => (
-              <option key={l} value={l}>
-                {l}배
-              </option>
-            ))}
-          </select>
-          <button
-            className="btn"
-            onClick={() => enterPosition(manualDirection, manualLeverage, "직접 진입")}
-            disabled={simBusy !== null}
-          >
-            직접 진입
-          </button>
         </div>
 
         <h3 className="subhead">보유 중인 포지션 ({openPositions.length}건)</h3>
@@ -1410,9 +1312,148 @@ export default function Home() {
       </Panel>
       </div>
 
+      <div id="panel-manual" role="tabpanel" aria-labelledby="tab-manual" hidden={activeTab !== "manual"}>
+      <Panel title="⑤ 수동 거래" subtitle="AI 추천을 참고하거나 직접 방향·배수·비중을 골라 스스로 진입/청산합니다. 실제 투자 조언이 아니며 실제 거래는 없습니다.">
+        <div className="disclaimer">
+          <WarningIcon />
+          <span>이 섹션은 재미를 위한 시뮬레이션입니다. 여기서 연 포지션도 ④ 자동매매 탭의 보유 목록·잔고·거래 내역에 함께 표시됩니다.</span>
+        </div>
+
+        {wallet && (
+          <p className="hint">
+            가용 자금: {fmtKrw(Math.round(wallet.available))} KRW (④ 탭과 잔고를 공유합니다)
+          </p>
+        )}
+
+        <div className="apikey-box">
+          {apiKeySaved ? (
+            <>
+              <span className="hint">내 OpenAI API 키가 이 브라우저에만 저장되어 있습니다(서버 전송 없음).</span>
+              <button className="btn ghost" onClick={clearApiKey}>
+                키 삭제
+              </button>
+            </>
+          ) : (
+            <>
+              <label htmlFor="openai-key-input" className="sr-only">
+                OpenAI API 키 (선택, 내 브라우저에만 저장됨)
+              </label>
+              <input
+                id="openai-key-input"
+                type="password"
+                autoComplete="off"
+                placeholder="OpenAI API 키 (sk-... , 내 브라우저에만 저장됨)"
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+              />
+              <button className="btn ghost" onClick={saveApiKey}>
+                저장
+              </button>
+              <span className="hint">키 없이도 규칙 기반 추천으로 사용 가능합니다.</span>
+            </>
+          )}
+        </div>
+
+        <h3 className="subhead">직접 진입용 비중·손절 설정</h3>
+        <div className="manual-entry">
+          <label htmlFor="manual-pct">가용 자금 대비 비중: {manualPct}%</label>
+          <input
+            id="manual-pct"
+            type="range"
+            min={10}
+            max={100}
+            step={5}
+            value={manualPct}
+            onChange={(e) => setManualPct(Number(e.target.value))}
+            className="pct-slider"
+          />
+          <label htmlFor="manual-stoploss" className="sr-only">
+            손절 퍼센트 (선택)
+          </label>
+          <input
+            id="manual-stoploss"
+            type="number"
+            min={1}
+            max={90}
+            placeholder="손절 % (선택, 예: 10)"
+            value={manualStopLoss}
+            onChange={(e) => setManualStopLoss(e.target.value)}
+            className="stoploss-input"
+          />
+        </div>
+        {wallet && (
+          <p className="hint">
+            직접 진입 규모: 약 {fmtKrw(Math.round(wallet.available * (manualPct / 100)))} KRW
+            {manualStopLoss.trim() && ` · 손실 ${manualStopLoss}% 도달 시 자동 청산`}
+          </p>
+        )}
+
+        <div className="demo-toolbar">
+          <button className="btn primary" onClick={requestAdvice} disabled={adviceLoading}>
+            {adviceLoading ? "추천 받는 중…" : "AI 추천 받기"}
+          </button>
+        </div>
+        {adviceMsg && <p className="empty">{adviceMsg}</p>}
+        {advice && (
+          <div className="advice-grid">
+            {advice.map((a, i) => (
+              <div key={i} className="advice-card">
+                <div className={`advice-dir ${a.direction}`}>{a.direction === "long" ? "롱" : "숏"} × {a.leverage}</div>
+                <p className="advice-meta">
+                  비중 {a.pct}% · 손절 -{a.stopLossPct}% · 신뢰도 {a.confidence}%
+                </p>
+                <p>{a.rationale}</p>
+                <button
+                  className="btn success"
+                  onClick={() => enterPosition(a.direction, a.leverage, a.rationale, a.pct, a.stopLossPct, a.confidence)}
+                  disabled={simBusy !== null}
+                >
+                  이 추천안(비중 {a.pct}%)으로 진입
+                </button>
+              </div>
+            ))}
+            {adviceSource && adviceSource !== "openai" && <p className="hint">(규칙 기반 추천을 사용했습니다.)</p>}
+          </div>
+        )}
+
+        <h3 className="subhead">직접 진입</h3>
+        <div className="manual-entry">
+          <label htmlFor="manual-direction" className="sr-only">
+            방향
+          </label>
+          <select
+            id="manual-direction"
+            value={manualDirection}
+            onChange={(e) => setManualDirection(e.target.value as "long" | "short")}
+          >
+            <option value="long">롱(상승 베팅)</option>
+            <option value="short">숏(하락 베팅)</option>
+          </select>
+          <label htmlFor="manual-leverage" className="sr-only">
+            레버리지
+          </label>
+          <select id="manual-leverage" value={manualLeverage} onChange={(e) => setManualLeverage(Number(e.target.value))}>
+            {LEVERAGE_CHOICES.map((l) => (
+              <option key={l} value={l}>
+                {l}배
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn"
+            onClick={() => enterPosition(manualDirection, manualLeverage, "직접 진입")}
+            disabled={simBusy !== null}
+          >
+            직접 진입
+          </button>
+        </div>
+
+      </Panel>
+      </div>
+
       <div id="panel-demo" role="tabpanel" aria-labelledby="tab-demo" hidden={activeTab !== "demo"}>
       <Panel
-        title="⑤ 합성 재생 데모 (채점용)"
+        title="⑥ 합성 재생 데모 (채점용)"
         subtitle="아래 버튼은 합성 시험값만 사용합니다. 실제 정보판 데이터와 분리되어 있습니다."
       >
         <div className="demo-toolbar">
