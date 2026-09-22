@@ -568,5 +568,55 @@ tbody tr:last-child td {
 }
 
 .sim-summary {
-  margin: 4px 0 20px;
+  margin: 4px 0 12px;
+}
+
+.live-heartbeat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 16px;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.live-dot.on {
+  background: var(--fresh);
+  animation: dot-blink 1.6s ease-in-out infinite;
+}
+
+@keyframes dot-blink {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--fresh) 50%, transparent);
+  }
+  50% {
+    opacity: 0.5;
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+.positions-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stoploss-input {
+  min-height: 44px;
+  width: 160px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 0.85rem;
 }

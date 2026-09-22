@@ -62,11 +62,14 @@ type SimPosition = {
   close_at: string | null;
   close_reason: string | null;
   rationale: string | null;
+  stop_loss_pct: number | null;
   current_price?: number;
   liquidation_price?: number;
   pnl_pct?: number;
   pnl_amount?: number;
 };
+
+type Wallet = { available: number; locked: number; total: number };
 
 type AdviceOption = { direction: "long" | "short"; leverage: number; rationale: string };
 
@@ -308,15 +311,19 @@ export default function Home() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [news, setNews] = useState<NewsItem[]>([]);
 
-  const [openPos, setOpenPos] = useState<SimPosition | null>(null);
+  const [openPositions, setOpenPositions] = useState<SimPosition[]>([]);
+  const [wallet, setWallet] = useState<Wallet | null>(null);
   const [history, setHistory] = useState<SimPosition[]>([]);
   const [advice, setAdvice] = useState<AdviceOption[] | null>(null);
   const [adviceSource, setAdviceSource] = useState<string | null>(null);
   const [adviceMsg, setAdviceMsg] = useState<string | null>(null);
   const [adviceLoading, setAdviceLoading] = useState(false);
-  const [simBusy, setSimBusy] = useState(false);
+  const [simBusy, setSimBusy] = useState<number | "advice" | null>(null);
   const [manualDirection, setManualDirection] = useState<"long" | "short">("long");
   const [manualLeverage, setManualLeverage] = useState(2);
+  const [manualPct, setManualPct] = useState(50);
+  const [manualStopLoss, setManualStopLoss] = useState("");
+  const [simUpdatedAt, setSimUpdatedAt] = useState<number | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [apiKeySaved, setApiKeySaved] = useState(false);
@@ -421,10 +428,17 @@ export default function Home() {
   const loadSim = useCallback(async () => {
     const res = await fetch("/api/sim/positions", { cache: "no-store" });
     if (!res.ok) return;
-    const json = (await res.json()) as { ok: boolean; open: SimPosition | null; history: SimPosition[] };
+    const json = (await res.json()) as {
+      ok: boolean;
+      open: SimPosition[];
+      history: SimPosition[];
+      wallet: Wallet;
+    };
     if (json.ok) {
-      setOpenPos(json.open);
+      setOpenPositions(json.open);
       setHistory(json.history);
+      setWallet(json.wallet);
+      setSimUpdatedAt(Date.now());
     }
   }, []);
 
@@ -444,35 +458,46 @@ export default function Home() {
     };
   }, [loadLive, loadDemo, loadStats, loadNews, loadSim]);
 
-  // 포지션 보유 중엔 실거래 화면처럼 더 자주(3초) 손익을 갱신한다.
+  // 포지션이 하나라도 열려 있으면 실거래 화면처럼 더 자주(3초) 손익을 갱신한다.
+  const hasOpenPosition = openPositions.length > 0;
   useEffect(() => {
-    if (!openPos) return;
+    if (!hasOpenPosition) return;
     const fast = setInterval(() => {
       loadSim();
     }, 3000);
     return () => clearInterval(fast);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openPos?.id, loadSim]);
+  }, [hasOpenPosition, loadSim]);
 
-  const [positionTicks, setPositionTicks] = useState<number[]>([]);
-  const openPositionIdRef = useRef<number | null>(null);
+  // 포지션별 실시간 가격 틱 기록(각자 자기 진입가 기준선을 가진 미니 차트용).
+  const [positionTicksById, setPositionTicksById] = useState<Record<number, number[]>>({});
 
   useEffect(() => {
-    if (!openPos) {
-      openPositionIdRef.current = null;
-      setPositionTicks([]);
-      return;
-    }
-    if (openPositionIdRef.current !== openPos.id) {
-      openPositionIdRef.current = openPos.id;
-      setPositionTicks(openPos.current_price != null ? [openPos.entry_price, openPos.current_price] : [openPos.entry_price]);
-      return;
-    }
-    if (openPos.current_price != null) {
-      setPositionTicks((prev) => [...prev, openPos.current_price as number].slice(-80));
-    }
+    setPositionTicksById((prev) => {
+      const next: Record<number, number[]> = {};
+      for (const pos of openPositions) {
+        const existing = prev[pos.id];
+        if (!existing) {
+          next[pos.id] = pos.current_price != null ? [pos.entry_price, pos.current_price] : [pos.entry_price];
+        } else {
+          const last = existing[existing.length - 1];
+          next[pos.id] =
+            pos.current_price != null && pos.current_price !== last
+              ? [...existing, pos.current_price].slice(-80)
+              : existing;
+        }
+      }
+      return next;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openPos?.id, openPos?.current_price]);
+  }, [openPositions]);
+
+  const [liveSecondsAgo, setLiveSecondsAgo] = useState(0);
+  useEffect(() => {
+    const tick = setInterval(() => {
+      if (simUpdatedAt) setLiveSecondsAgo(Math.floor((Date.now() - simUpdatedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [simUpdatedAt]);
 
   async function runFixture(id: string) {
     setDemoBusy(id);
@@ -598,29 +623,37 @@ export default function Home() {
   }
 
   async function enterPosition(direction: "long" | "short", leverage: number, rationale?: string) {
-    setSimBusy(true);
+    setSimBusy("advice");
     try {
+      const stopLossPct = manualStopLoss.trim() ? Number(manualStopLoss.trim()) : null;
       const res = await fetch("/api/sim/open", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ direction, leverage, rationale }),
+        body: JSON.stringify({ direction, leverage, pct: manualPct, stopLossPct, rationale }),
       });
-      if (res.ok) {
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (json.ok) {
         setAdvice(null);
         await loadSim();
+      } else {
+        setAdviceMsg(json.error === "insufficient balance" ? "가용 자금이 부족합니다." : "진입에 실패했습니다.");
       }
     } finally {
-      setSimBusy(false);
+      setSimBusy(null);
     }
   }
 
-  async function closeCurrent() {
-    setSimBusy(true);
+  async function closePositionById(id: number) {
+    setSimBusy(id);
     try {
-      await fetch("/api/sim/close", { method: "POST" });
+      await fetch("/api/sim/close", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
       await loadSim();
     } finally {
-      setSimBusy(false);
+      setSimBusy(null);
     }
   }
 
@@ -784,10 +817,32 @@ export default function Home() {
       </div>
 
       <div id="panel-sim" role="tabpanel" aria-labelledby="tab-sim" hidden={activeTab !== "sim"}>
-      <Panel title="④ AI 모의투자 시뮬레이터 (오락용)" subtitle="가상 자금(1,000,000 KRW 단위)으로만 노는 게임입니다. 실제 투자 조언이 아니며 실제 거래는 없습니다.">
+      <Panel title="④ AI 모의투자 시뮬레이터 (오락용)" subtitle="가상 총자산 안에서 비중을 골라 여러 건 동시에 굴리는 게임입니다. 실제 투자 조언이 아니며 실제 거래는 없습니다.">
         <div className="disclaimer">
           ⚠ 이 섹션은 재미를 위한 시뮬레이션입니다. AI 추천은 실제 금융 조언이 아니며, 실제 자금 거래를 발생시키지 않습니다.
         </div>
+
+        {wallet && (
+          <div className="stat-grid sim-summary">
+            <div className="stat-tile">
+              <span className="stat-label">총자산</span>
+              <span className="stat-value">{fmtKrw(Math.round(wallet.total))} KRW</span>
+            </div>
+            <div className="stat-tile">
+              <span className="stat-label">가용 자금</span>
+              <span className="stat-value">{fmtKrw(Math.round(wallet.available))} KRW</span>
+            </div>
+            <div className="stat-tile">
+              <span className="stat-label">포지션에 묶임</span>
+              <span className="stat-value">{fmtKrw(Math.round(wallet.locked))} KRW</span>
+            </div>
+          </div>
+        )}
+
+        <p className="hint live-heartbeat">
+          <span className={`live-dot ${hasOpenPosition ? "on" : ""}`} aria-hidden="true" />
+          {simUpdatedAt ? `${liveSecondsAgo}초 전 업데이트` : "업데이트 대기 중"} · 포지션 보유 중엔 3초마다 자동 갱신
+        </p>
 
         <div className="apikey-box">
           {apiKeySaved ? (
@@ -818,106 +873,156 @@ export default function Home() {
           )}
         </div>
 
-        {openPos ? (
-          <div className="live-card">
-            <div className="live-value-row">
-              <div>
-                <div className="live-value">
-                  {openPos.direction === "long" ? "롱" : "숏"} × {openPos.leverage}
-                  <span className="unit"> 진입가 {fmtKrw(openPos.entry_price)}</span>
-                </div>
-                {openPos.pnl_amount != null && (
-                  <div
-                    key={Math.round(openPos.pnl_amount)}
-                    className={`delta pulse ${openPos.pnl_amount >= 0 ? "up" : "down"}`}
-                    role="status"
-                    aria-live="polite"
-                  >
-                    손익 {openPos.pnl_amount >= 0 ? "+" : ""}
-                    {fmtKrw(Math.round(openPos.pnl_amount))} KRW ({openPos.pnl_pct?.toFixed(2)}%)
-                  </div>
-                )}
-              </div>
-              <span className="badge badge-fresh pulse">포지션 보유 중</span>
-            </div>
-            <LivePositionChart points={positionTicks} entryPrice={openPos.entry_price} direction={openPos.direction} />
-            <dl className="meta-grid">
-              <dt>현재가</dt>
-              <dd className="mono">{fmtKrw(openPos.current_price)} KRW</dd>
-              <dt>청산가</dt>
-              <dd className="mono">{fmtKrw(openPos.liquidation_price)} KRW</dd>
-              <dt>진입 시각</dt>
-              <dd className="mono">{fmtTime(openPos.entry_at)}</dd>
-              {openPos.rationale && (
-                <>
-                  <dt>근거</dt>
-                  <dd>{openPos.rationale}</dd>
-                </>
-              )}
-            </dl>
-            <button className="btn ghost" onClick={closeCurrent} disabled={simBusy}>
-              {simBusy ? "처리 중…" : "지금 청산(수동)"}
-            </button>
-          </div>
-        ) : (
-          <>
-            <div className="demo-toolbar">
-              <button className="btn primary" onClick={requestAdvice} disabled={adviceLoading}>
-                {adviceLoading ? "추천 받는 중…" : "AI 추천 받기"}
-              </button>
-            </div>
-            {adviceMsg && <p className="empty">{adviceMsg}</p>}
-            {advice && (
-              <div className="advice-grid">
-                {advice.map((a, i) => (
-                  <div key={i} className="advice-card">
-                    <div className={`advice-dir ${a.direction}`}>{a.direction === "long" ? "롱" : "숏"} × {a.leverage}</div>
-                    <p>{a.rationale}</p>
-                    <button
-                      className="btn success"
-                      onClick={() => enterPosition(a.direction, a.leverage, a.rationale)}
-                      disabled={simBusy}
-                    >
-                      이 추천안으로 진입
-                    </button>
-                  </div>
-                ))}
-                {adviceSource && adviceSource !== "openai" && <p className="hint">(규칙 기반 추천을 사용했습니다.)</p>}
-              </div>
-            )}
+        <h3 className="subhead">진입 설정 (추천안·직접 진입 공통)</h3>
+        <div className="manual-entry">
+          <label htmlFor="manual-pct" className="sr-only">
+            가용 자금 대비 비중
+          </label>
+          <select id="manual-pct" value={manualPct} onChange={(e) => setManualPct(Number(e.target.value))}>
+            {[25, 50, 100].map((p) => (
+              <option key={p} value={p}>
+                비중 {p}%
+              </option>
+            ))}
+          </select>
+          <label htmlFor="manual-stoploss" className="sr-only">
+            손절 퍼센트 (선택)
+          </label>
+          <input
+            id="manual-stoploss"
+            type="number"
+            min={1}
+            max={90}
+            placeholder="손절 % (선택, 예: 10)"
+            value={manualStopLoss}
+            onChange={(e) => setManualStopLoss(e.target.value)}
+            className="stoploss-input"
+          />
+        </div>
+        {wallet && (
+          <p className="hint">
+            이번 진입 규모: 약 {fmtKrw(Math.round(wallet.available * (manualPct / 100)))} KRW
+            {manualStopLoss.trim() && ` · 손실 ${manualStopLoss}% 도달 시 자동 청산`}
+          </p>
+        )}
 
-            <h3 className="subhead">직접 진입</h3>
-            <div className="manual-entry">
-              <label htmlFor="manual-direction" className="sr-only">
-                방향
-              </label>
-              <select
-                id="manual-direction"
-                value={manualDirection}
-                onChange={(e) => setManualDirection(e.target.value as "long" | "short")}
-              >
-                <option value="long">롱(상승 베팅)</option>
-                <option value="short">숏(하락 베팅)</option>
-              </select>
-              <label htmlFor="manual-leverage" className="sr-only">
-                레버리지
-              </label>
-              <select id="manual-leverage" value={manualLeverage} onChange={(e) => setManualLeverage(Number(e.target.value))}>
-                {LEVERAGE_CHOICES.map((l) => (
-                  <option key={l} value={l}>
-                    {l}배
-                  </option>
-                ))}
-              </select>
-              <button
-                className="btn"
-                onClick={() => enterPosition(manualDirection, manualLeverage, "직접 진입")}
-                disabled={simBusy}
-              >
-                직접 진입
-              </button>
-            </div>
-          </>
+        <div className="demo-toolbar">
+          <button className="btn primary" onClick={requestAdvice} disabled={adviceLoading}>
+            {adviceLoading ? "추천 받는 중…" : "AI 추천 받기"}
+          </button>
+        </div>
+        {adviceMsg && <p className="empty">{adviceMsg}</p>}
+        {advice && (
+          <div className="advice-grid">
+            {advice.map((a, i) => (
+              <div key={i} className="advice-card">
+                <div className={`advice-dir ${a.direction}`}>{a.direction === "long" ? "롱" : "숏"} × {a.leverage}</div>
+                <p>{a.rationale}</p>
+                <button
+                  className="btn success"
+                  onClick={() => enterPosition(a.direction, a.leverage, a.rationale)}
+                  disabled={simBusy !== null}
+                >
+                  이 추천안으로 진입
+                </button>
+              </div>
+            ))}
+            {adviceSource && adviceSource !== "openai" && <p className="hint">(규칙 기반 추천을 사용했습니다.)</p>}
+          </div>
+        )}
+
+        <h3 className="subhead">직접 진입</h3>
+        <div className="manual-entry">
+          <label htmlFor="manual-direction" className="sr-only">
+            방향
+          </label>
+          <select
+            id="manual-direction"
+            value={manualDirection}
+            onChange={(e) => setManualDirection(e.target.value as "long" | "short")}
+          >
+            <option value="long">롱(상승 베팅)</option>
+            <option value="short">숏(하락 베팅)</option>
+          </select>
+          <label htmlFor="manual-leverage" className="sr-only">
+            레버리지
+          </label>
+          <select id="manual-leverage" value={manualLeverage} onChange={(e) => setManualLeverage(Number(e.target.value))}>
+            {LEVERAGE_CHOICES.map((l) => (
+              <option key={l} value={l}>
+                {l}배
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn"
+            onClick={() => enterPosition(manualDirection, manualLeverage, "직접 진입")}
+            disabled={simBusy !== null}
+          >
+            직접 진입
+          </button>
+        </div>
+
+        <h3 className="subhead">보유 중인 포지션 ({openPositions.length}건)</h3>
+        {openPositions.length === 0 ? (
+          <p className="empty">보유 중인 포지션이 없습니다.</p>
+        ) : (
+          <div className="positions-stack">
+            {openPositions.map((pos) => (
+              <div className="live-card" key={pos.id}>
+                <div className="live-value-row">
+                  <div>
+                    <div className="live-value">
+                      {pos.direction === "long" ? "롱" : "숏"} × {pos.leverage}
+                      <span className="unit"> 진입가 {fmtKrw(pos.entry_price)}</span>
+                    </div>
+                    {pos.pnl_amount != null && (
+                      <div
+                        key={Math.round(pos.pnl_amount)}
+                        className={`delta pulse ${pos.pnl_amount >= 0 ? "up" : "down"}`}
+                        role="status"
+                        aria-live="polite"
+                      >
+                        손익 {pos.pnl_amount >= 0 ? "+" : ""}
+                        {fmtKrw(Math.round(pos.pnl_amount))} KRW ({pos.pnl_pct?.toFixed(2)}%)
+                      </div>
+                    )}
+                  </div>
+                  <span className="badge badge-fresh pulse">보유 중</span>
+                </div>
+                <LivePositionChart
+                  points={positionTicksById[pos.id] ?? []}
+                  entryPrice={pos.entry_price}
+                  direction={pos.direction}
+                />
+                <dl className="meta-grid">
+                  <dt>현재가</dt>
+                  <dd className="mono">{fmtKrw(pos.current_price)} KRW</dd>
+                  <dt>청산가</dt>
+                  <dd className="mono">{fmtKrw(pos.liquidation_price)} KRW</dd>
+                  <dt>진입 규모</dt>
+                  <dd className="mono">{fmtKrw(pos.virtual_size)} KRW</dd>
+                  <dt>진입 시각</dt>
+                  <dd className="mono">{fmtTime(pos.entry_at)}</dd>
+                  {pos.stop_loss_pct != null && (
+                    <>
+                      <dt>손절 기준</dt>
+                      <dd>-{pos.stop_loss_pct}%</dd>
+                    </>
+                  )}
+                  {pos.rationale && (
+                    <>
+                      <dt>근거</dt>
+                      <dd>{pos.rationale}</dd>
+                    </>
+                  )}
+                </dl>
+                <button className="btn ghost" onClick={() => closePositionById(pos.id)} disabled={simBusy !== null}>
+                  {simBusy === pos.id ? "처리 중…" : "지금 청산(수동)"}
+                </button>
+              </div>
+            ))}
+          </div>
         )}
 
         {portfolioStats && (
@@ -963,8 +1068,8 @@ export default function Home() {
                     <td>{h.leverage}배</td>
                     <td className="mono">{fmtKrw(h.entry_price)}</td>
                     <td className="mono">{fmtKrw(h.close_price)}</td>
-                    <td className={h.close_reason === "liquidation" ? "down" : ""}>
-                      {h.close_reason === "liquidation" ? "청산됨" : "수동 종료"}
+                    <td className={h.close_reason !== "manual" ? "down" : ""}>
+                      {h.close_reason === "liquidation" ? "강제 청산" : h.close_reason === "stop_loss" ? "손절" : "수동 종료"}
                     </td>
                     <td className="mono">{fmtTime(h.close_at)}</td>
                   </tr>

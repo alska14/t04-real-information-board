@@ -58,9 +58,18 @@ export function ensureSchema(): Promise<void> {
           close_price double precision,
           close_at timestamptz,
           close_reason text,
-          rationale text
+          rationale text,
+          stop_loss_pct double precision
         )
       `;
+      await sql`ALTER TABLE sim_positions ADD COLUMN IF NOT EXISTS stop_loss_pct double precision`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS sim_wallet (
+          id integer PRIMARY KEY DEFAULT 1,
+          balance double precision NOT NULL DEFAULT 10000000
+        )
+      `;
+      await sql`INSERT INTO sim_wallet (id, balance) VALUES (1, 10000000) ON CONFLICT (id) DO NOTHING`;
     })();
   }
   return schemaReady;
@@ -249,14 +258,15 @@ export interface SimPosition {
   close_at: string | null;
   close_reason: string | null;
   rationale: string | null;
+  stop_loss_pct: number | null;
 }
 
-export async function getOpenPosition(): Promise<SimPosition | null> {
+export async function listOpenPositions(): Promise<SimPosition[]> {
   await ensureSchema();
   const rows = (await sql`
-    SELECT * FROM sim_positions WHERE status = 'open' ORDER BY entry_at DESC LIMIT 1
+    SELECT * FROM sim_positions WHERE status = 'open' ORDER BY entry_at DESC
   `) as unknown as SimPosition[];
-  return rows[0] ?? null;
+  return rows;
 }
 
 export async function listPositionHistory(limit = 20): Promise<SimPosition[]> {
@@ -267,33 +277,44 @@ export async function listPositionHistory(limit = 20): Promise<SimPosition[]> {
   return rows;
 }
 
+export async function getWalletBalance(): Promise<number> {
+  await ensureSchema();
+  const rows = (await sql`SELECT balance FROM sim_wallet WHERE id = 1`) as unknown as { balance: number }[];
+  return rows[0]?.balance ?? 0;
+}
+
 export async function openPosition(
   direction: "long" | "short",
   leverage: number,
   entryPrice: number,
-  rationale: string | null
+  rationale: string | null,
+  virtualSize: number,
+  stopLossPct: number | null
 ): Promise<SimPosition> {
   await ensureSchema();
   const rows = (await sql`
-    INSERT INTO sim_positions (direction, leverage, entry_price, rationale)
-    VALUES (${direction}, ${leverage}, ${entryPrice}, ${rationale})
+    INSERT INTO sim_positions (direction, leverage, entry_price, rationale, virtual_size, stop_loss_pct)
+    VALUES (${direction}, ${leverage}, ${entryPrice}, ${rationale}, ${virtualSize}, ${stopLossPct})
     RETURNING *
   `) as unknown as SimPosition[];
+  await sql`UPDATE sim_wallet SET balance = balance - ${virtualSize} WHERE id = 1`;
   return rows[0];
 }
 
 export async function closePosition(
   id: number,
   closePrice: number,
-  reason: "manual" | "liquidation"
+  reason: "manual" | "liquidation" | "stop_loss",
+  returnAmount: number
 ): Promise<void> {
   await ensureSchema();
   await sql`
     UPDATE sim_positions
-    SET status = ${reason === "liquidation" ? "liquidated" : "closed"},
+    SET status = ${reason === "manual" ? "closed" : "liquidated"},
         close_price = ${closePrice},
         close_at = now(),
         close_reason = ${reason}
     WHERE id = ${id} AND status = 'open'
   `;
+  await sql`UPDATE sim_wallet SET balance = balance + ${returnAmount} WHERE id = 1`;
 }

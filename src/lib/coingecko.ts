@@ -48,7 +48,7 @@ export async function fetchMarketSnapshot(): Promise<MarketSnapshot | null> {
       sparkline7d: coin.sparkline_in_7d?.price ?? [],
       updatedAt: coin.last_updated,
     };
-    cache = { data: snapshot, expiresAt: Date.now() + 20_000 };
+    cache = { data: snapshot, expiresAt: Date.now() + 8_000 };
     return snapshot;
   } catch {
     clearTimeout(timer);

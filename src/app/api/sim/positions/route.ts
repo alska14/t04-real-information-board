@@ -1,32 +1,54 @@
 import { NextResponse } from "next/server";
-import { closePosition, getOpenPosition, listPositionHistory } from "@/lib/db";
+import { closePosition, getWalletBalance, listOpenPositions, listPositionHistory } from "@/lib/db";
 import { fetchMarketSnapshot } from "@/lib/coingecko";
-import { isLiquidated, liquidationPrice, pnlAmount, pnlPct } from "@/lib/sim";
+import { isLiquidated, liquidationPrice, pnlAmount, pnlPct, stopLossHit } from "@/lib/sim";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const snapshot = await fetchMarketSnapshot();
-  let open = await getOpenPosition();
+  const openRaw = await listOpenPositions();
 
-  if (open && snapshot) {
-    if (isLiquidated(open.direction, open.entry_price, open.leverage, snapshot.price)) {
-      await closePosition(open.id, snapshot.price, "liquidation");
-      open = null;
+  const stillOpen: (typeof openRaw)[number][] = [];
+  if (snapshot) {
+    for (const pos of openRaw) {
+      if (isLiquidated(pos.direction, pos.entry_price, pos.leverage, snapshot.price)) {
+        await closePosition(pos.id, snapshot.price, "liquidation", 0);
+        continue;
+      }
+      const pct = pnlPct(pos.direction, pos.entry_price, pos.leverage, snapshot.price);
+      if (stopLossHit(pos.stop_loss_pct, pct)) {
+        const amount = pnlAmount(pos.virtual_size, pct);
+        await closePosition(pos.id, snapshot.price, "stop_loss", pos.virtual_size + amount);
+        continue;
+      }
+      stillOpen.push(pos);
     }
+  } else {
+    stillOpen.push(...openRaw);
   }
 
-  const openWithPnl = open && snapshot
-    ? {
-        ...open,
-        current_price: snapshot.price,
-        liquidation_price: liquidationPrice(open.direction, open.entry_price, open.leverage),
-        pnl_pct: pnlPct(open.direction, open.entry_price, open.leverage, snapshot.price),
-        pnl_amount: pnlAmount(open.virtual_size, pnlPct(open.direction, open.entry_price, open.leverage, snapshot.price)),
-      }
-    : null;
+  const open = stillOpen.map((pos) => {
+    if (!snapshot) return pos;
+    const pct = pnlPct(pos.direction, pos.entry_price, pos.leverage, snapshot.price);
+    return {
+      ...pos,
+      current_price: snapshot.price,
+      liquidation_price: liquidationPrice(pos.direction, pos.entry_price, pos.leverage),
+      pnl_pct: pct,
+      pnl_amount: pnlAmount(pos.virtual_size, pct),
+    };
+  });
 
   const history = await listPositionHistory(20);
+  const balance = await getWalletBalance();
+  const locked = stillOpen.reduce((sum, p) => sum + p.virtual_size, 0);
 
-  return NextResponse.json({ ok: true, open: openWithPnl, history, price: snapshot?.price ?? null });
+  return NextResponse.json({
+    ok: true,
+    open,
+    history,
+    price: snapshot?.price ?? null,
+    wallet: { available: balance, locked, total: balance + locked },
+  });
 }

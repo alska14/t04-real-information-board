@@ -20,3 +20,8 @@ export function pnlPct(direction: "long" | "short", entryPrice: number, leverage
 export function pnlAmount(virtualSize: number, pnlPercent: number) {
   return (virtualSize * pnlPercent) / 100;
 }
+
+export function stopLossHit(stopLossPct: number | null, currentPnlPct: number): boolean {
+  if (stopLossPct == null) return false;
+  return currentPnlPct <= -Math.abs(stopLossPct);
+}
