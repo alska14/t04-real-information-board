@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { closePosition, listOpenPositions } from "@/lib/db";
+import { closePosition, listOpenPositions, logDecision } from "@/lib/db";
 import { fetchMarketSnapshot } from "@/lib/coingecko";
-import { pnlAmount, pnlPct } from "@/lib/sim";
+import { buildOutcomeNote, pnlAmount, pnlPct } from "@/lib/sim";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +23,8 @@ export async function POST(request: Request) {
   }
   const pct = pnlPct(pos.direction, pos.entry_price, pos.leverage, snapshot.price);
   const amount = pnlAmount(pos.virtual_size, pct);
-  await closePosition(id, snapshot.price, "manual", Math.max(0, pos.virtual_size + amount));
+  const note = buildOutcomeNote(pos.direction, pos.entry_price, snapshot.price, pos.leverage, "manual");
+  await closePosition(id, snapshot.price, "manual", Math.max(0, pos.virtual_size + amount), null, null, note);
+  await logDecision({ kind: "manual_close", positionId: id, note });
   return NextResponse.json({ ok: true });
 }

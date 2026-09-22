@@ -63,6 +63,23 @@ export function ensureSchema(): Promise<void> {
         )
       `;
       await sql`ALTER TABLE sim_positions ADD COLUMN IF NOT EXISTS stop_loss_pct double precision`;
+      await sql`ALTER TABLE sim_positions ADD COLUMN IF NOT EXISTS entry_confidence double precision`;
+      await sql`ALTER TABLE sim_positions ADD COLUMN IF NOT EXISTS exit_confidence double precision`;
+      await sql`ALTER TABLE sim_positions ADD COLUMN IF NOT EXISTS exit_rationale text`;
+      await sql`ALTER TABLE sim_positions ADD COLUMN IF NOT EXISTS opened_by text NOT NULL DEFAULT 'manual'`;
+      await sql`ALTER TABLE sim_positions ADD COLUMN IF NOT EXISTS closed_by text`;
+      await sql`ALTER TABLE sim_positions ADD COLUMN IF NOT EXISTS outcome_note text`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS sim_decision_log (
+          id serial PRIMARY KEY,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          kind text NOT NULL,
+          position_id integer,
+          confidence double precision,
+          rationale text,
+          note text
+        )
+      `;
       await sql`
         CREATE TABLE IF NOT EXISTS sim_wallet (
           id integer PRIMARY KEY DEFAULT 1,
@@ -70,6 +87,17 @@ export function ensureSchema(): Promise<void> {
         )
       `;
       await sql`INSERT INTO sim_wallet (id, balance) VALUES (1, 10000000) ON CONFLICT (id) DO NOTHING`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS sim_settings (
+          id integer PRIMARY KEY DEFAULT 1,
+          auto_trading_enabled boolean NOT NULL DEFAULT false,
+          max_allocation_pct integer NOT NULL DEFAULT 25,
+          confidence_threshold integer NOT NULL DEFAULT 70,
+          last_run_at timestamptz,
+          last_run_summary text
+        )
+      `;
+      await sql`INSERT INTO sim_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`;
     })();
   }
   return schemaReady;
@@ -259,6 +287,50 @@ export interface SimPosition {
   close_reason: string | null;
   rationale: string | null;
   stop_loss_pct: number | null;
+  entry_confidence: number | null;
+  exit_confidence: number | null;
+  exit_rationale: string | null;
+  opened_by: "manual" | "ai_auto";
+  closed_by: "manual" | "ai_auto" | "stop_loss" | "liquidation" | null;
+  outcome_note: string | null;
+}
+
+export interface SimSettings {
+  auto_trading_enabled: boolean;
+  max_allocation_pct: number;
+  confidence_threshold: number;
+  last_run_at: string | null;
+  last_run_summary: string | null;
+}
+
+export async function getSimSettings(): Promise<SimSettings> {
+  await ensureSchema();
+  const rows = (await sql`SELECT * FROM sim_settings WHERE id = 1`) as unknown as SimSettings[];
+  return rows[0];
+}
+
+export async function updateSimSettings(patch: {
+  auto_trading_enabled?: boolean;
+  max_allocation_pct?: number;
+  confidence_threshold?: number;
+}): Promise<SimSettings> {
+  await ensureSchema();
+  const current = await getSimSettings();
+  const merged = { ...current, ...patch };
+  const rows = (await sql`
+    UPDATE sim_settings
+    SET auto_trading_enabled = ${merged.auto_trading_enabled},
+        max_allocation_pct = ${merged.max_allocation_pct},
+        confidence_threshold = ${merged.confidence_threshold}
+    WHERE id = 1
+    RETURNING *
+  `) as unknown as SimSettings[];
+  return rows[0];
+}
+
+export async function recordAutoRun(summary: string): Promise<void> {
+  await ensureSchema();
+  await sql`UPDATE sim_settings SET last_run_at = now(), last_run_summary = ${summary} WHERE id = 1`;
 }
 
 export async function listOpenPositions(): Promise<SimPosition[]> {
@@ -289,12 +361,16 @@ export async function openPosition(
   entryPrice: number,
   rationale: string | null,
   virtualSize: number,
-  stopLossPct: number | null
+  stopLossPct: number | null,
+  entryConfidence: number | null = null,
+  openedBy: "manual" | "ai_auto" = "manual"
 ): Promise<SimPosition> {
   await ensureSchema();
   const rows = (await sql`
-    INSERT INTO sim_positions (direction, leverage, entry_price, rationale, virtual_size, stop_loss_pct)
-    VALUES (${direction}, ${leverage}, ${entryPrice}, ${rationale}, ${virtualSize}, ${stopLossPct})
+    INSERT INTO sim_positions (
+      direction, leverage, entry_price, rationale, virtual_size, stop_loss_pct, entry_confidence, opened_by
+    )
+    VALUES (${direction}, ${leverage}, ${entryPrice}, ${rationale}, ${virtualSize}, ${stopLossPct}, ${entryConfidence}, ${openedBy})
     RETURNING *
   `) as unknown as SimPosition[];
   await sql`UPDATE sim_wallet SET balance = balance - ${virtualSize} WHERE id = 1`;
@@ -304,17 +380,119 @@ export async function openPosition(
 export async function closePosition(
   id: number,
   closePrice: number,
-  reason: "manual" | "liquidation" | "stop_loss",
-  returnAmount: number
+  reason: "manual" | "liquidation" | "stop_loss" | "ai_auto",
+  returnAmount: number,
+  exitConfidence: number | null = null,
+  exitRationale: string | null = null,
+  outcomeNote: string | null = null
 ): Promise<void> {
   await ensureSchema();
   await sql`
     UPDATE sim_positions
-    SET status = ${reason === "manual" ? "closed" : "liquidated"},
+    SET status = ${reason === "manual" || reason === "ai_auto" ? "closed" : "liquidated"},
         close_price = ${closePrice},
         close_at = now(),
-        close_reason = ${reason}
+        close_reason = ${reason},
+        closed_by = ${reason},
+        exit_confidence = ${exitConfidence},
+        exit_rationale = ${exitRationale},
+        outcome_note = ${outcomeNote}
     WHERE id = ${id} AND status = 'open'
   `;
   await sql`UPDATE sim_wallet SET balance = balance + ${returnAmount} WHERE id = 1`;
+}
+
+export interface DecisionLogRow {
+  id: number;
+  created_at: string;
+  kind: string;
+  position_id: number | null;
+  confidence: number | null;
+  rationale: string | null;
+  note: string | null;
+}
+
+export async function logDecision(entry: {
+  kind: string;
+  positionId?: number | null;
+  confidence?: number | null;
+  rationale?: string | null;
+  note?: string | null;
+}): Promise<void> {
+  await ensureSchema();
+  await sql`
+    INSERT INTO sim_decision_log (kind, position_id, confidence, rationale, note)
+    VALUES (${entry.kind}, ${entry.positionId ?? null}, ${entry.confidence ?? null}, ${entry.rationale ?? null}, ${entry.note ?? null})
+  `;
+}
+
+export async function listDecisionLog(limit = 30): Promise<DecisionLogRow[]> {
+  await ensureSchema();
+  const rows = (await sql`
+    SELECT * FROM sim_decision_log ORDER BY created_at DESC LIMIT ${limit}
+  `) as unknown as DecisionLogRow[];
+  return rows;
+}
+
+// 최근 청산 결과를 요약해 다음 AI 호출의 프롬프트에 "지난 성과 피드백"으로 끼워 넣는다.
+// 모델 가중치를 다시 학습시키는 것이 아니라, 매 호출마다 최근 승률·신뢰도 구간별 성적을
+// 문맥으로 알려줘서 스스로 보정하게 하는 인컨텍스트 방식이다.
+export async function getRecentPerformanceSummary(limit = 15): Promise<string> {
+  await ensureSchema();
+  const rows = (await sql`
+    SELECT direction, entry_confidence, virtual_size, entry_price, close_price, leverage, closed_by, outcome_note
+    FROM sim_positions
+    WHERE status != 'open' AND close_price IS NOT NULL
+    ORDER BY close_at DESC
+    LIMIT ${limit}
+  `) as unknown as {
+    direction: "long" | "short";
+    entry_confidence: number | null;
+    virtual_size: number;
+    entry_price: number;
+    close_price: number;
+    leverage: number;
+    closed_by: string | null;
+    outcome_note: string | null;
+  }[];
+
+  if (rows.length === 0) return "최근 거래 이력 없음.";
+
+  let wins = 0;
+  let highConfWins = 0;
+  let highConfTotal = 0;
+  let lowConfWins = 0;
+  let lowConfTotal = 0;
+  const recentLosses: string[] = [];
+
+  for (const r of rows) {
+    const raw = r.direction === "long" ? (r.close_price - r.entry_price) / r.entry_price : (r.entry_price - r.close_price) / r.entry_price;
+    const win = raw > 0;
+    if (win) wins += 1;
+    if (r.entry_confidence != null) {
+      if (r.entry_confidence >= 70) {
+        highConfTotal += 1;
+        if (win) highConfWins += 1;
+      } else {
+        lowConfTotal += 1;
+        if (win) lowConfWins += 1;
+      }
+    }
+    if (!win && recentLosses.length < 3 && r.outcome_note) {
+      recentLosses.push(r.outcome_note);
+    }
+  }
+
+  const winRate = ((wins / rows.length) * 100).toFixed(0);
+  const parts = [`최근 ${rows.length}건 중 ${wins}승, 승률 ${winRate}%.`];
+  if (highConfTotal > 0) {
+    parts.push(`신뢰도 70 이상 추천 ${highConfTotal}건 중 ${highConfWins}승(${((highConfWins / highConfTotal) * 100).toFixed(0)}%).`);
+  }
+  if (lowConfTotal > 0) {
+    parts.push(`신뢰도 70 미만 추천 ${lowConfTotal}건 중 ${lowConfWins}승(${((lowConfWins / lowConfTotal) * 100).toFixed(0)}%).`);
+  }
+  if (recentLosses.length) {
+    parts.push(`최근 손실 원인: ${recentLosses.join(" / ")}`);
+  }
+  return parts.join(" ");
 }

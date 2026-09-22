@@ -4,8 +4,6 @@ import { fetchMarketSnapshot } from "@/lib/coingecko";
 
 export const dynamic = "force-dynamic";
 
-const ALLOWED_PCT = [25, 50, 100];
-
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
     direction?: "long" | "short";
@@ -13,6 +11,7 @@ export async function POST(request: Request) {
     pct?: number;
     stopLossPct?: number | null;
     rationale?: string;
+    confidence?: number | null;
   };
 
   if (body.direction !== "long" && body.direction !== "short") {
@@ -23,8 +22,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "leverage must be an integer 1-10" }, { status: 400 });
   }
   const pct = Number(body.pct);
-  if (!ALLOWED_PCT.includes(pct)) {
-    return NextResponse.json({ ok: false, error: "pct must be 25, 50 or 100" }, { status: 400 });
+  if (!Number.isFinite(pct) || pct < 10 || pct > 100) {
+    return NextResponse.json({ ok: false, error: "pct must be between 10 and 100" }, { status: 400 });
   }
   let stopLossPct: number | null = null;
   if (body.stopLossPct != null) {
@@ -46,13 +45,18 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "price unavailable" }, { status: 502 });
   }
 
+  const confidence =
+    body.confidence != null && Number.isFinite(Number(body.confidence)) ? Number(body.confidence) : null;
+
   const position = await openPosition(
     body.direction,
     leverage,
     snapshot.price,
     body.rationale?.slice(0, 200) ?? null,
     virtualSize,
-    stopLossPct
+    stopLossPct,
+    confidence,
+    "manual"
   );
   return NextResponse.json({ ok: true, position });
 }

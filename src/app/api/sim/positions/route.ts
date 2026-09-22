@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { closePosition, getWalletBalance, listOpenPositions, listPositionHistory } from "@/lib/db";
+import { closePosition, getWalletBalance, listOpenPositions, listPositionHistory, logDecision } from "@/lib/db";
 import { fetchMarketSnapshot } from "@/lib/coingecko";
-import { isLiquidated, liquidationPrice, pnlAmount, pnlPct, stopLossHit } from "@/lib/sim";
+import { buildOutcomeNote, isLiquidated, liquidationPrice, pnlAmount, pnlPct, stopLossHit } from "@/lib/sim";
 
 export const dynamic = "force-dynamic";
 
@@ -13,13 +13,17 @@ export async function GET() {
   if (snapshot) {
     for (const pos of openRaw) {
       if (isLiquidated(pos.direction, pos.entry_price, pos.leverage, snapshot.price)) {
-        await closePosition(pos.id, snapshot.price, "liquidation", 0);
+        const note = buildOutcomeNote(pos.direction, pos.entry_price, snapshot.price, pos.leverage, "liquidation");
+        await closePosition(pos.id, snapshot.price, "liquidation", 0, null, null, note);
+        await logDecision({ kind: "liquidation", positionId: pos.id, note });
         continue;
       }
       const pct = pnlPct(pos.direction, pos.entry_price, pos.leverage, snapshot.price);
       if (stopLossHit(pos.stop_loss_pct, pct)) {
         const amount = pnlAmount(pos.virtual_size, pct);
-        await closePosition(pos.id, snapshot.price, "stop_loss", pos.virtual_size + amount);
+        const note = buildOutcomeNote(pos.direction, pos.entry_price, snapshot.price, pos.leverage, "stop_loss");
+        await closePosition(pos.id, snapshot.price, "stop_loss", Math.max(0, pos.virtual_size + amount), null, null, note);
+        await logDecision({ kind: "stop_loss", positionId: pos.id, note });
         continue;
       }
       stillOpen.push(pos);

@@ -610,6 +610,126 @@ tbody tr:last-child td {
   margin-bottom: 16px;
 }
 
+.pct-slider {
+  width: 100%;
+  accent-color: var(--accent);
+  margin: 4px 0 12px;
+}
+
+.auto-settings {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.auto-settings label {
+  font-size: 0.85rem;
+  display: block;
+  margin-top: 10px;
+}
+
+.auto-settings label:first-of-type {
+  margin-top: 0;
+}
+
+.auto-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.auto-toggle input {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.badge-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.badge-ai {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.advice-meta {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.log-cell {
+  max-width: 220px;
+  white-space: normal;
+  font-size: 0.8rem;
+}
+
+.decision-log {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.decision-log li {
+  font-size: 0.82rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: baseline;
+}
+
+.log-kind {
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
+.log-entry,
+.log-exit {
+  color: var(--fresh);
+  border-color: color-mix(in srgb, var(--fresh) 40%, transparent);
+}
+
+.log-entry_skip,
+.log-exit_skip {
+  color: var(--text-dim);
+}
+
+.log-liquidation,
+.log-stop_loss {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 40%, transparent);
+}
+
+.log-time {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
 .stoploss-input {
   min-height: 44px;
   width: 160px;

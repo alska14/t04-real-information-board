@@ -63,6 +63,12 @@ type SimPosition = {
   close_reason: string | null;
   rationale: string | null;
   stop_loss_pct: number | null;
+  entry_confidence: number | null;
+  exit_confidence: number | null;
+  exit_rationale: string | null;
+  outcome_note: string | null;
+  opened_by: "manual" | "ai_auto";
+  closed_by: "manual" | "ai_auto" | "stop_loss" | "liquidation" | null;
   current_price?: number;
   liquidation_price?: number;
   pnl_pct?: number;
@@ -71,7 +77,32 @@ type SimPosition = {
 
 type Wallet = { available: number; locked: number; total: number };
 
-type AdviceOption = { direction: "long" | "short"; leverage: number; rationale: string };
+type AdviceOption = {
+  direction: "long" | "short";
+  leverage: number;
+  pct: number;
+  stopLossPct: number;
+  confidence: number;
+  rationale: string;
+};
+
+type SimSettings = {
+  auto_trading_enabled: boolean;
+  max_allocation_pct: number;
+  confidence_threshold: number;
+  last_run_at: string | null;
+  last_run_summary: string | null;
+};
+
+type DecisionLogRow = {
+  id: number;
+  created_at: string;
+  kind: string;
+  position_id: number | null;
+  confidence: number | null;
+  rationale: string | null;
+  note: string | null;
+};
 
 const ERROR_LABEL: Record<string, string> = {
   none: "정상",
@@ -103,6 +134,16 @@ const TABS = [
   { id: "sim", label: "④ 시뮬레이터" },
   { id: "demo", label: "⑤ 채점 데모" },
 ] as const;
+
+const DECISION_KIND_LABEL: Record<string, string> = {
+  entry: "AI 진입",
+  entry_skip: "AI 진입 보류",
+  exit: "AI 매도",
+  exit_skip: "AI 매도 보류",
+  liquidation: "강제 청산",
+  stop_loss: "손절",
+  manual_close: "수동 종료",
+};
 
 function fmtTime(iso: string | null) {
   if (!iso) return "—";
@@ -321,9 +362,12 @@ export default function Home() {
   const [simBusy, setSimBusy] = useState<number | "advice" | null>(null);
   const [manualDirection, setManualDirection] = useState<"long" | "short">("long");
   const [manualLeverage, setManualLeverage] = useState(2);
-  const [manualPct, setManualPct] = useState(50);
+  const [manualPct, setManualPct] = useState(25);
   const [manualStopLoss, setManualStopLoss] = useState("");
   const [simUpdatedAt, setSimUpdatedAt] = useState<number | null>(null);
+  const [settings, setSettings] = useState<SimSettings | null>(null);
+  const [settingsBusy, setSettingsBusy] = useState(false);
+  const [decisionLog, setDecisionLog] = useState<DecisionLogRow[]>([]);
   const [apiKey, setApiKey] = useState("");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [apiKeySaved, setApiKeySaved] = useState(false);
@@ -442,31 +486,51 @@ export default function Home() {
     }
   }, []);
 
+  const loadSettings = useCallback(async () => {
+    const res = await fetch("/api/sim/settings", { cache: "no-store" });
+    if (!res.ok) return;
+    const json = (await res.json()) as { ok: boolean; settings: SimSettings };
+    if (json.ok) setSettings(json.settings);
+  }, []);
+
+  const loadDecisionLog = useCallback(async () => {
+    const res = await fetch("/api/sim/log", { cache: "no-store" });
+    if (!res.ok) return;
+    const json = (await res.json()) as { ok: boolean; log: DecisionLogRow[] };
+    if (json.ok) setDecisionLog(json.log);
+  }, []);
+
   useEffect(() => {
     loadLive();
     loadDemo();
     loadStats();
     loadNews();
     loadSim();
+    loadSettings();
+    loadDecisionLog();
 
     pollRef.current = setInterval(() => {
       loadStats();
       loadSim();
+      loadSettings();
+      loadDecisionLog();
     }, 30_000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [loadLive, loadDemo, loadStats, loadNews, loadSim]);
+  }, [loadLive, loadDemo, loadStats, loadNews, loadSim, loadSettings, loadDecisionLog]);
 
-  // 포지션이 하나라도 열려 있으면 실거래 화면처럼 더 자주(3초) 손익을 갱신한다.
+  // 포지션이 하나라도 열려 있거나 자동매매가 켜져 있으면 실거래 화면처럼 더 자주(3초) 갱신한다.
   const hasOpenPosition = openPositions.length > 0;
+  const autoTradingOn = settings?.auto_trading_enabled ?? false;
   useEffect(() => {
-    if (!hasOpenPosition) return;
+    if (!hasOpenPosition && !autoTradingOn) return;
     const fast = setInterval(() => {
       loadSim();
+      loadDecisionLog();
     }, 3000);
     return () => clearInterval(fast);
-  }, [hasOpenPosition, loadSim]);
+  }, [hasOpenPosition, autoTradingOn, loadSim, loadDecisionLog]);
 
   // 포지션별 실시간 가격 틱 기록(각자 자기 진입가 기준선을 가진 미니 차트용).
   const [positionTicksById, setPositionTicksById] = useState<Record<number, number[]>>({});
@@ -533,10 +597,13 @@ export default function Home() {
       {
         direction: bullish ? "long" : "short",
         leverage: 2,
+        pct: 25,
+        stopLossPct: 10,
+        confidence: 55,
         rationale: bullish ? "24시간 상승세, 낮은 배수로 추세 추종" : "24시간 하락세, 낮은 배수로 추세 추종",
       },
-      { direction: "long", leverage: 1, rationale: "무배수에 가까운 안전한 롱 관망" },
-      { direction: "short", leverage: 5, rationale: "변동성 베팅용 고배수 숏 (재미용)" },
+      { direction: "long", leverage: 1, pct: 10, stopLossPct: 15, confidence: 50, rationale: "무배수에 가까운 안전한 롱 관망" },
+      { direction: "short", leverage: 5, pct: 10, stopLossPct: 8, confidence: 40, rationale: "변동성 베팅용 고배수 숏 (재미용)" },
     ];
   }
 
@@ -549,8 +616,21 @@ export default function Home() {
       const o = item as Record<string, unknown>;
       if (o.direction !== "long" && o.direction !== "short") return null;
       const lev = Number(o.leverage);
+      const pct = Number(o.pct);
+      const stopLossPct = Number(o.stopLossPct);
+      const confidence = Number(o.confidence);
       if (!Number.isInteger(lev) || lev < 1 || lev > 10) return null;
-      out.push({ direction: o.direction, leverage: lev, rationale: typeof o.rationale === "string" ? o.rationale.slice(0, 120) : "" });
+      if (!Number.isFinite(pct) || pct < 10 || pct > 100) return null;
+      if (!Number.isFinite(stopLossPct) || stopLossPct < 1 || stopLossPct > 90) return null;
+      if (!Number.isFinite(confidence) || confidence < 0 || confidence > 100) return null;
+      out.push({
+        direction: o.direction,
+        leverage: lev,
+        pct: Math.round(pct),
+        stopLossPct: Math.round(stopLossPct),
+        confidence: Math.round(confidence),
+        rationale: typeof o.rationale === "string" ? o.rationale.slice(0, 120) : "",
+      });
     }
     return out.length ? out : null;
   }
@@ -571,25 +651,36 @@ export default function Home() {
       const priceText = stats ? stats.price.toLocaleString("ko-KR") : "알 수 없음";
       const changeText = stats ? stats.change24hPct.toFixed(2) : "0";
 
+      let performanceText = "";
+      try {
+        const perfRes = await fetch("/api/sim/performance", { cache: "no-store" });
+        if (perfRes.ok) {
+          const perfJson = (await perfRes.json()) as { ok: boolean; summary?: string };
+          if (perfJson.ok && perfJson.summary) performanceText = ` 최근 성과 피드백: ${perfJson.summary}`;
+        }
+      } catch {
+        // 성과 피드백은 있으면 좋고 없어도 무방
+      }
+
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
           model: "gpt-4o-mini",
           temperature: 0.7,
-          max_tokens: 300,
+          max_tokens: 400,
           response_format: { type: "json_object" },
           messages: [
             {
               role: "system",
               content:
                 "당신은 오락용 가상 모의투자 게임의 도우미입니다. 실제 금융 조언이 아니고, 참가자는 실제 자금이 아닌 가상 자금으로만 놉니다. " +
-                "주어진 시세를 참고해 재미있는 가상 포지션 추천안 정확히 3개를 만드세요. " +
-                '반드시 {"options":[{"direction":"long|short","leverage":정수(1~10),"rationale":"한국어 20자 내외"}, ...]} 형태의 JSON 객체만 답하세요. 다른 설명은 쓰지 마세요.',
+                "주어진 시세와 최근 성과 피드백을 참고해 재미있는 가상 포지션 추천안 정확히 3개를 만드세요. 확신이 낮을수록 pct(비중)를 작게, stopLossPct(손절폭)를 타이트하게 제안하세요. " +
+                '반드시 {"options":[{"direction":"long|short","leverage":정수(1~10),"pct":정수(10~100),"stopLossPct":정수(1~90),"confidence":정수(0~100),"rationale":"한국어 20자 내외"}, ...]} 형태의 JSON 객체만 답하세요. 다른 설명은 쓰지 마세요.',
             },
             {
               role: "user",
-              content: `비트코인 현재가 ${priceText}KRW, 24시간 변동 ${changeText}%, 7일 구간 ${sparkMin.toFixed(0)}~${sparkMax.toFixed(0)}KRW.`,
+              content: `비트코인 현재가 ${priceText}KRW, 24시간 변동 ${changeText}%, 7일 구간 ${sparkMin.toFixed(0)}~${sparkMax.toFixed(0)}KRW.${performanceText}`,
             },
           ],
         }),
@@ -622,14 +713,22 @@ export default function Home() {
     }
   }
 
-  async function enterPosition(direction: "long" | "short", leverage: number, rationale?: string) {
+  async function enterPosition(
+    direction: "long" | "short",
+    leverage: number,
+    rationale?: string,
+    overridePct?: number,
+    overrideStopLoss?: number,
+    confidence?: number
+  ) {
     setSimBusy("advice");
     try {
-      const stopLossPct = manualStopLoss.trim() ? Number(manualStopLoss.trim()) : null;
+      const pct = overridePct ?? manualPct;
+      const stopLossPct = overrideStopLoss ?? (manualStopLoss.trim() ? Number(manualStopLoss.trim()) : null);
       const res = await fetch("/api/sim/open", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ direction, leverage, pct: manualPct, stopLossPct, rationale }),
+        body: JSON.stringify({ direction, leverage, pct, stopLossPct, rationale, confidence: confidence ?? null }),
       });
       const json = (await res.json()) as { ok: boolean; error?: string };
       if (json.ok) {
@@ -654,6 +753,21 @@ export default function Home() {
       await loadSim();
     } finally {
       setSimBusy(null);
+    }
+  }
+
+  async function patchSettings(patch: Partial<Pick<SimSettings, "auto_trading_enabled" | "max_allocation_pct" | "confidence_threshold">>) {
+    setSettingsBusy(true);
+    try {
+      const res = await fetch("/api/sim/settings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const json = (await res.json()) as { ok: boolean; settings?: SimSettings };
+      if (json.ok && json.settings) setSettings(json.settings);
+    } finally {
+      setSettingsBusy(false);
     }
   }
 
@@ -844,6 +958,57 @@ export default function Home() {
           {simUpdatedAt ? `${liveSecondsAgo}초 전 업데이트` : "업데이트 대기 중"} · 포지션 보유 중엔 3초마다 자동 갱신
         </p>
 
+        <h3 className="subhead">자동매매 설정</h3>
+        <div className="auto-settings">
+          <label className="auto-toggle">
+            <input
+              type="checkbox"
+              checked={settings?.auto_trading_enabled ?? false}
+              disabled={settingsBusy || !settings}
+              onChange={(e) => patchSettings({ auto_trading_enabled: e.target.checked })}
+            />
+            <span>
+              자동매매 {settings?.auto_trading_enabled ? <b className="up">ON</b> : <b className="down">OFF</b>}
+              {" "}— 서버가 5분마다(외부 크론 연결 시) AI 신뢰도를 확인해 조건 만족 시 스스로 매수·매도합니다.
+            </span>
+          </label>
+
+          <label htmlFor="max-alloc">최대 비중 상한: {settings?.max_allocation_pct ?? 25}% (AI가 이보다 낮게 제안하면 낮은 쪽을 씀)</label>
+          <input
+            id="max-alloc"
+            type="range"
+            min={10}
+            max={100}
+            step={5}
+            value={settings?.max_allocation_pct ?? 25}
+            disabled={settingsBusy || !settings}
+            onChange={(e) => patchSettings({ max_allocation_pct: Number(e.target.value) })}
+            className="pct-slider"
+          />
+
+          <label htmlFor="conf-threshold">AI 신뢰도 기준: {settings?.confidence_threshold ?? 70}% 이상일 때만 자동 실행</label>
+          <input
+            id="conf-threshold"
+            type="range"
+            min={1}
+            max={100}
+            step={1}
+            value={settings?.confidence_threshold ?? 70}
+            disabled={settingsBusy || !settings}
+            onChange={(e) => patchSettings({ confidence_threshold: Number(e.target.value) })}
+            className="pct-slider"
+          />
+
+          {settings?.last_run_at && (
+            <p className="hint">
+              마지막 자동실행: {fmtTime(settings.last_run_at)} — {settings.last_run_summary}
+            </p>
+          )}
+          {!settings?.last_run_at && settings?.auto_trading_enabled && (
+            <p className="hint">아직 자동실행 기록 없음 — 외부 크론이 연결되어 있는지 확인하세요.</p>
+          )}
+        </div>
+
         <div className="apikey-box">
           {apiKeySaved ? (
             <>
@@ -873,18 +1038,19 @@ export default function Home() {
           )}
         </div>
 
-        <h3 className="subhead">진입 설정 (추천안·직접 진입 공통)</h3>
+        <h3 className="subhead">직접 진입용 비중·손절 설정</h3>
         <div className="manual-entry">
-          <label htmlFor="manual-pct" className="sr-only">
-            가용 자금 대비 비중
-          </label>
-          <select id="manual-pct" value={manualPct} onChange={(e) => setManualPct(Number(e.target.value))}>
-            {[25, 50, 100].map((p) => (
-              <option key={p} value={p}>
-                비중 {p}%
-              </option>
-            ))}
-          </select>
+          <label htmlFor="manual-pct">가용 자금 대비 비중: {manualPct}%</label>
+          <input
+            id="manual-pct"
+            type="range"
+            min={10}
+            max={100}
+            step={5}
+            value={manualPct}
+            onChange={(e) => setManualPct(Number(e.target.value))}
+            className="pct-slider"
+          />
           <label htmlFor="manual-stoploss" className="sr-only">
             손절 퍼센트 (선택)
           </label>
@@ -901,7 +1067,7 @@ export default function Home() {
         </div>
         {wallet && (
           <p className="hint">
-            이번 진입 규모: 약 {fmtKrw(Math.round(wallet.available * (manualPct / 100)))} KRW
+            직접 진입 규모: 약 {fmtKrw(Math.round(wallet.available * (manualPct / 100)))} KRW
             {manualStopLoss.trim() && ` · 손실 ${manualStopLoss}% 도달 시 자동 청산`}
           </p>
         )}
@@ -917,13 +1083,16 @@ export default function Home() {
             {advice.map((a, i) => (
               <div key={i} className="advice-card">
                 <div className={`advice-dir ${a.direction}`}>{a.direction === "long" ? "롱" : "숏"} × {a.leverage}</div>
+                <p className="advice-meta">
+                  비중 {a.pct}% · 손절 -{a.stopLossPct}% · 신뢰도 {a.confidence}%
+                </p>
                 <p>{a.rationale}</p>
                 <button
                   className="btn success"
-                  onClick={() => enterPosition(a.direction, a.leverage, a.rationale)}
+                  onClick={() => enterPosition(a.direction, a.leverage, a.rationale, a.pct, a.stopLossPct, a.confidence)}
                   disabled={simBusy !== null}
                 >
-                  이 추천안으로 진입
+                  이 추천안(비중 {a.pct}%)으로 진입
                 </button>
               </div>
             ))}
@@ -988,7 +1157,12 @@ export default function Home() {
                       </div>
                     )}
                   </div>
-                  <span className="badge badge-fresh pulse">보유 중</span>
+                  <div className="badge-stack">
+                    <span className="badge badge-fresh pulse">보유 중</span>
+                    <span className={`badge ${pos.opened_by === "ai_auto" ? "badge-ai" : "badge-dim"}`}>
+                      {pos.opened_by === "ai_auto" ? "AI 자동 진입" : "수동 진입"}
+                    </span>
+                  </div>
                 </div>
                 <LivePositionChart
                   points={positionTicksById[pos.id] ?? []}
@@ -1008,6 +1182,12 @@ export default function Home() {
                     <>
                       <dt>손절 기준</dt>
                       <dd>-{pos.stop_loss_pct}%</dd>
+                    </>
+                  )}
+                  {pos.entry_confidence != null && (
+                    <>
+                      <dt>진입 신뢰도</dt>
+                      <dd>{pos.entry_confidence}%</dd>
                     </>
                   )}
                   {pos.rationale && (
@@ -1045,7 +1225,7 @@ export default function Home() {
           </div>
         )}
 
-        <h3 className="subhead">청산·종료 기록</h3>
+        <h3 className="subhead">거래 내역 (AI 근거·신뢰도 포함)</h3>
         {history.length === 0 ? (
           <p className="empty">아직 기록이 없습니다.</p>
         ) : (
@@ -1054,29 +1234,71 @@ export default function Home() {
               <thead>
                 <tr>
                   <th>방향</th>
-                  <th>배수</th>
-                  <th>진입가</th>
-                  <th>종료가</th>
-                  <th>결과</th>
+                  <th>진입</th>
+                  <th>종료</th>
+                  <th>승패</th>
+                  <th>실행주체</th>
+                  <th>진입 근거(신뢰도)</th>
+                  <th>종료 근거(신뢰도)</th>
+                  <th>결과 설명</th>
                   <th>종료 시각</th>
                 </tr>
               </thead>
               <tbody>
-                {history.map((h) => (
-                  <tr key={h.id}>
-                    <td>{h.direction === "long" ? "롱" : "숏"}</td>
-                    <td>{h.leverage}배</td>
-                    <td className="mono">{fmtKrw(h.entry_price)}</td>
-                    <td className="mono">{fmtKrw(h.close_price)}</td>
-                    <td className={h.close_reason !== "manual" ? "down" : ""}>
-                      {h.close_reason === "liquidation" ? "강제 청산" : h.close_reason === "stop_loss" ? "손절" : "수동 종료"}
-                    </td>
-                    <td className="mono">{fmtTime(h.close_at)}</td>
-                  </tr>
-                ))}
+                {history.map((h) => {
+                  const pnl = closedPnlAmount(h);
+                  const win = pnl != null && pnl > 0;
+                  return (
+                    <tr key={h.id}>
+                      <td>
+                        {h.direction === "long" ? "롱" : "숏"}×{h.leverage}
+                      </td>
+                      <td className="mono">{fmtKrw(h.entry_price)}</td>
+                      <td className="mono">{fmtKrw(h.close_price)}</td>
+                      <td className={win ? "up" : "down"}>
+                        {win ? "승" : "패"}
+                        {pnl != null && ` (${pnl >= 0 ? "+" : ""}${fmtKrw(Math.round(pnl))})`}
+                      </td>
+                      <td>{h.opened_by === "ai_auto" ? "AI 자동" : "수동"}</td>
+                      <td className="log-cell">
+                        {h.rationale ?? "—"}
+                        {h.entry_confidence != null && ` (${h.entry_confidence}%)`}
+                      </td>
+                      <td className="log-cell">
+                        {h.close_reason === "liquidation"
+                          ? "강제청산(청산가 도달)"
+                          : h.close_reason === "stop_loss"
+                            ? "손절선 도달"
+                            : h.exit_rationale
+                              ? `${h.exit_rationale}${h.exit_confidence != null ? ` (${h.exit_confidence}%)` : ""}`
+                              : "수동 종료"}
+                      </td>
+                      <td className="log-cell">{h.outcome_note ?? "—"}</td>
+                      <td className="mono">{fmtTime(h.close_at)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+        )}
+
+        <h3 className="subhead">AI 판단 로그 (실행 안 된 판단 포함)</h3>
+        {decisionLog.length === 0 ? (
+          <p className="empty">아직 로그가 없습니다.</p>
+        ) : (
+          <ul className="decision-log">
+            {decisionLog.map((d) => (
+              <li key={d.id}>
+                <span className={`log-kind log-${d.kind}`}>{DECISION_KIND_LABEL[d.kind] ?? d.kind}</span>
+                {d.position_id != null && <span className="mono"> #{d.position_id}</span>}
+                {d.confidence != null && <span> 신뢰도 {d.confidence}%</span>}
+                {d.rationale && <span> · {d.rationale}</span>}
+                {d.note && <span className="hint"> ({d.note})</span>}
+                <span className="log-time mono">{fmtTime(d.created_at)}</span>
+              </li>
+            ))}
+          </ul>
         )}
       </Panel>
       </div>
