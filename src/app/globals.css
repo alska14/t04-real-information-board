@@ -538,7 +538,7 @@ tbody tr:last-child td {
 
 .advice-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -704,7 +704,7 @@ tbody tr:last-child td {
 }
 
 .log-cell {
-  max-width: 220px;
+  max-width: 320px;
   white-space: normal;
   font-size: 0.8rem;
 }

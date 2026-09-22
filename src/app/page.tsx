@@ -666,10 +666,26 @@ export default function Home() {
         pct: 25,
         stopLossPct: 10,
         confidence: 55,
-        rationale: bullish ? "24시간 상승세, 낮은 배수로 추세 추종" : "24시간 하락세, 낮은 배수로 추세 추종",
+        rationale: bullish
+          ? `24시간 변동 +${change.toFixed(2)}%로 상승세라 추세 추종. 규칙 기반 추정이라 신뢰도는 중간 수준(55%)으로 제한.`
+          : `24시간 변동 ${change.toFixed(2)}%로 하락세라 추세 추종. 규칙 기반 추정이라 신뢰도는 중간 수준(55%)으로 제한.`,
       },
-      { direction: "long", leverage: 1, pct: 10, stopLossPct: 15, confidence: 50, rationale: "무배수에 가까운 안전한 롱 관망" },
-      { direction: "short", leverage: 5, pct: 10, stopLossPct: 8, confidence: 40, rationale: "변동성 베팅용 고배수 숏 (재미용)" },
+      {
+        direction: "long",
+        leverage: 1,
+        pct: 10,
+        stopLossPct: 15,
+        confidence: 50,
+        rationale: "무배수에 가까운 안전한 롱 관망안. 방향성 근거가 약해 신뢰도를 50%로 중립적으로 매김.",
+      },
+      {
+        direction: "short",
+        leverage: 5,
+        pct: 10,
+        stopLossPct: 8,
+        confidence: 40,
+        rationale: "변동성 베팅용 고배수 숏(재미용). 레버리지가 높아 리스크가 커서 신뢰도를 40%로 낮게 매김.",
+      },
     ];
   }
 
@@ -695,7 +711,7 @@ export default function Home() {
         pct: Math.round(pct),
         stopLossPct: Math.round(stopLossPct),
         confidence: Math.round(confidence),
-        rationale: typeof o.rationale === "string" ? o.rationale.slice(0, 120) : "",
+        rationale: typeof o.rationale === "string" ? o.rationale.slice(0, 220) : "",
       });
     }
     return out.length ? out : null;
@@ -734,7 +750,7 @@ export default function Home() {
         body: JSON.stringify({
           model: "gpt-4o-mini",
           temperature: 0.7,
-          max_tokens: 400,
+          max_tokens: 700,
           response_format: { type: "json_object" },
           messages: [
             {
@@ -742,7 +758,9 @@ export default function Home() {
               content:
                 "당신은 오락용 가상 모의투자 게임의 도우미입니다. 실제 금융 조언이 아니고, 참가자는 실제 자금이 아닌 가상 자금으로만 놉니다. " +
                 "주어진 시세와 최근 성과 피드백을 참고해 재미있는 가상 포지션 추천안 정확히 3개를 만드세요. 확신이 낮을수록 pct(비중)를 작게, stopLossPct(손절폭)를 타이트하게 제안하세요. " +
-                '반드시 {"options":[{"direction":"long|short","leverage":정수(1~10),"pct":정수(10~100),"stopLossPct":정수(1~90),"confidence":정수(0~100),"rationale":"한국어 20자 내외"}, ...]} 형태의 JSON 객체만 답하세요. 다른 설명은 쓰지 마세요.',
+                "rationale은 반드시 두 부분으로 구성하세요: (1) 방향 판단 근거 — 24시간 변동률·7일 구간·현재가 같은 구체적 수치를 최소 1개 인용, " +
+                "(2) '신뢰도 N%인 이유' — 왜 그 확신 수준인지 명시. 한 문장으로 이어 총 70~120자 한국어로 쓰세요. " +
+                '반드시 {"options":[{"direction":"long|short","leverage":정수(1~10),"pct":정수(10~100),"stopLossPct":정수(1~90),"confidence":정수(0~100),"rationale":"70~120자, 수치 인용 + 신뢰도 근거 포함"}, ...]} 형태의 JSON 객체만 답하세요. 다른 설명은 쓰지 마세요.',
             },
             {
               role: "user",

@@ -29,7 +29,7 @@ async function callOpenAI(system: string, user: string): Promise<string | null> 
       body: JSON.stringify({
         model: "gpt-4o-mini",
         temperature: 0.6,
-        max_tokens: 400,
+        max_tokens: 700,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: system },
@@ -59,7 +59,9 @@ export async function getEntryRecommendations(
       "주어진 시세와 최근 성과 피드백을 참고해 가상 포지션 추천안 정확히 3개를 만드세요. 최근 성과에서 신뢰도를 과신했던 패턴이 보이면 confidence를 더 보수적으로 매기고, " +
       "확신이 낮을수록 pct(비중)를 작게, stopLossPct(손절폭)를 타이트하게 제안하세요. " +
       "각 추천에는 0~100 사이의 confidence, 10~100 사이의 pct(가용자금 대비 비중 %), 1~90 사이의 stopLossPct(손절 기준 %)를 반드시 매기세요. " +
-      '반드시 {"options":[{"direction":"long|short","leverage":정수(1~10),"pct":정수(10~100),"stopLossPct":정수(1~90),"confidence":정수(0~100),"rationale":"한국어 20자 내외"}, ...]} 형태의 JSON 객체만 답하세요.',
+      "rationale은 반드시 두 부분으로 구성하세요: (1) 방향 판단 근거 — 24시간 변동률·7일 구간·현재가 같은 구체적 수치를 최소 1개 인용, " +
+      "(2) '신뢰도 N%인 이유' — 왜 그 확신 수준인지(추세 뚜렷함/불확실성/최근 성과 반영 등) 명시. 두 부분을 자연스러운 한 문장으로 이어 총 70~120자 한국어로 쓰세요. " +
+      '반드시 {"options":[{"direction":"long|short","leverage":정수(1~10),"pct":정수(10~100),"stopLossPct":정수(1~90),"confidence":정수(0~100),"rationale":"70~120자, 수치 인용 + 신뢰도 근거 포함"}, ...]} 형태의 JSON 객체만 답하세요.',
     `비트코인 현재가 ${snapshot.price.toLocaleString("ko-KR")}KRW, 24시간 변동 ${snapshot.change24hPct.toFixed(2)}%, 7일 구간 ${sparkMin.toFixed(0)}~${sparkMax.toFixed(0)}KRW.` +
       (performanceSummary ? ` 최근 성과 피드백: ${performanceSummary}` : "")
   );
@@ -85,7 +87,7 @@ export async function getEntryRecommendations(
         pct: Math.round(pct),
         stopLossPct: Math.round(stopLossPct),
         confidence,
-        rationale: typeof o.rationale === "string" ? o.rationale.slice(0, 120) : "",
+        rationale: typeof o.rationale === "string" ? o.rationale.slice(0, 220) : "",
       });
     }
     return out.length ? out : null;
@@ -105,15 +107,18 @@ export async function getExitDecisions(
   const summary = positions
     .map(
       (p) =>
-        `id=${p.id} ${p.direction} ${p.leverage}배 진입가=${p.entry_price.toFixed(0)} 현재손익=${pnlPctFor(p).toFixed(2)}%`
+        `id=${p.id} ${p.direction} ${p.leverage}배 진입가=${p.entry_price.toFixed(0)} 현재손익=${pnlPctFor(p).toFixed(2)}% ` +
+        `진입근거="${p.rationale ?? "없음"}" 진입신뢰도=${p.entry_confidence ?? "?"}% 손절기준=${p.stop_loss_pct != null ? `-${p.stop_loss_pct}%` : "없음"}`
     )
-    .join("; ");
+    .join(" | ");
 
   const content = await callOpenAI(
     "당신은 오락용 가상 모의투자 게임의 자동매매 도우미입니다. 실제 금융 조언이 아니고, 가상 자금만 다룹니다. " +
       "아래 보유 중인 각 포지션에 대해 '지금 매도(청산)해야 하는지' 0~100 confidence로 판단하세요. 숫자가 높을수록 지금 매도를 강하게 권합니다. " +
       "최근 성과 피드백에서 손실 패턴이 반복되면 더 적극적으로 매도를 권하세요. " +
-      '반드시 {"decisions":[{"id":포지션id,"confidence":정수(0~100),"rationale":"한국어 20자 내외"}, ...]} 형태의 JSON 객체만 답하세요. 모든 포지션에 대해 하나씩 판단하세요.',
+      "rationale은 반드시 두 부분을 담으세요: (1) 판단 근거 — 진입 시 근거였던 내용이 여전히 유효한지, 현재 손익률(%)이 왜 매도/보유를 뒷받침하는지 구체적으로, " +
+      "(2) '신뢰도 N%인 이유' — 왜 그 확신 수준인지 명시. 한 문장으로 이어 총 70~120자 한국어로 쓰세요. " +
+      '반드시 {"decisions":[{"id":포지션id,"confidence":정수(0~100),"rationale":"70~120자, 손익률 인용 + 신뢰도 근거 포함"}, ...]} 형태의 JSON 객체만 답하세요. 모든 포지션에 대해 하나씩 판단하세요.',
     `현재가 ${snapshot.price.toLocaleString("ko-KR")}KRW, 24시간 변동 ${snapshot.change24hPct.toFixed(2)}%. 보유 포지션: ${summary}` +
       (performanceSummary ? ` 최근 성과 피드백: ${performanceSummary}` : "")
   );
@@ -127,7 +132,7 @@ export async function getExitDecisions(
       const id = Number(o.id);
       const confidence = Number(o.confidence);
       if (!Number.isInteger(id) || !Number.isFinite(confidence) || confidence < 0 || confidence > 100) continue;
-      out.push({ id, confidence, rationale: typeof o.rationale === "string" ? o.rationale.slice(0, 120) : "" });
+      out.push({ id, confidence, rationale: typeof o.rationale === "string" ? o.rationale.slice(0, 220) : "" });
     }
     return out;
   } catch {
