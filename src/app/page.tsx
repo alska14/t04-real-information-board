@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Row = {
   signal_id: string;
@@ -93,6 +93,14 @@ const FIXTURE_BUTTONS: { id: string; label: string; kind: "success" | "failure" 
 
 const LEVERAGE_CHOICES = [1, 2, 3, 5, 10];
 
+const TABS = [
+  { id: "live", label: "① 정보판" },
+  { id: "chart", label: "② 차트·통계" },
+  { id: "news", label: "③ 뉴스" },
+  { id: "sim", label: "④ 시뮬레이터" },
+  { id: "demo", label: "⑤ 채점 데모" },
+] as const;
+
 function fmtTime(iso: string | null) {
   if (!iso) return "—";
   try {
@@ -111,21 +119,83 @@ function fmtKrw(n: number | null | undefined) {
   return n.toLocaleString("ko-KR");
 }
 
+function closedPnlAmount(h: SimPosition): number | null {
+  if (h.close_price == null) return null;
+  const raw =
+    h.direction === "long"
+      ? (h.close_price - h.entry_price) / h.entry_price
+      : (h.entry_price - h.close_price) / h.entry_price;
+  return h.virtual_size * raw * h.leverage;
+}
+
 function StatusBadge({ status }: { status: Status }) {
-  if (!status) return <span className="badge badge-dim">아직 조회 안 함</span>;
+  if (!status) {
+    return (
+      <span className="badge badge-dim" role="status" aria-live="polite">
+        아직 조회 안 함
+      </span>
+    );
+  }
   const key = `${status.freshness}-${status.error_code}-${status.sequence}`;
   if (status.freshness === "fresh") {
     return (
-      <span key={key} className="badge badge-fresh pulse">
+      <span key={key} className="badge badge-fresh pulse" role="status" aria-live="polite">
         fresh · 정상
       </span>
     );
   }
   return (
-    <span key={key} className="badge badge-stale pulse">
+    <span key={key} className="badge badge-stale pulse" role="status" aria-live="polite">
       stale(오래된 값) · {ERROR_LABEL[status.error_code] ?? status.error_code}
     </span>
   );
+}
+
+// 값이 바뀔 때 이전 값에서 새 값으로 부드럽게 올라가는 숫자 카운트업.
+function useCountUp(target: number | null, durationMs = 600) {
+  const [display, setDisplay] = useState<number | null>(target);
+  const prevRef = useRef<number | null>(target);
+  const frameRef = useRef<number | null>(null);
+  const reducedMotionRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      reducedMotionRef.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch {
+      reducedMotionRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (target == null) {
+      setDisplay(null);
+      return;
+    }
+    const from = prevRef.current ?? target;
+    if (from === target || reducedMotionRef.current) {
+      setDisplay(target);
+      prevRef.current = target;
+      return;
+    }
+    const start = performance.now();
+    const animate = (now: number) => {
+      const progress = Math.min(1, (now - start) / durationMs);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(from + (target - from) * eased);
+      if (progress < 1) {
+        frameRef.current = requestAnimationFrame(animate);
+      } else {
+        prevRef.current = target;
+      }
+    };
+    frameRef.current = requestAnimationFrame(animate);
+    return () => {
+      if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, durationMs]);
+
+  return display;
 }
 
 function Panel({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
@@ -194,6 +264,40 @@ function Sparkline({ points }: { points: number[] }) {
   );
 }
 
+// 포지션 보유 중 실시간 가격 흐름 + 진입가 기준선. 방향에 맞게 기준선 위/아래 색을 다르게 표시한다.
+function LivePositionChart({
+  points,
+  entryPrice,
+  direction,
+}: {
+  points: number[];
+  entryPrice: number;
+  direction: "long" | "short";
+}) {
+  if (points.length < 2) return <p className="empty">실시간 데이터를 모으는 중…</p>;
+  const w = 600;
+  const h = 100;
+  const allValues = [...points, entryPrice];
+  const min = Math.min(...allValues);
+  const max = Math.max(...allValues);
+  const range = max - min || 1;
+  const step = w / (points.length - 1);
+  const y = (v: number) => h - ((v - min) / range) * h;
+  const coords = points.map((p, i) => `${(i * step).toFixed(1)},${y(p).toFixed(1)}`);
+  const linePath = `M${coords.join(" L")}`;
+  const current = points[points.length - 1];
+  const inProfit = direction === "long" ? current >= entryPrice : current <= entryPrice;
+  const color = inProfit ? "var(--fresh)" : "var(--error)";
+  const entryY = y(entryPrice);
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="sparkline sparkline-sm" preserveAspectRatio="none" role="img" aria-label="포지션 보유 중 실시간 가격 흐름">
+      <line x1="0" y1={entryY} x2={w} y2={entryY} stroke="var(--text-dim)" strokeWidth="1" strokeDasharray="4 4" />
+      <path d={linePath} fill="none" stroke={color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export default function Home() {
   const [live, setLive] = useState<ReadingResponse | null>(null);
   const [liveLoading, setLiveLoading] = useState(false);
@@ -216,6 +320,7 @@ export default function Home() {
   const [apiKey, setApiKey] = useState("");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [apiKeySaved, setApiKeySaved] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
 
   useEffect(() => {
     try {
@@ -227,7 +332,32 @@ export default function Home() {
     } catch {
       // localStorage 접근 불가(프라이빗 모드 등) — 무시하고 키 없이 진행
     }
+
+    try {
+      const savedTheme = window.localStorage.getItem("t04-theme");
+      if (savedTheme === "light" || savedTheme === "dark") {
+        setTheme(savedTheme);
+      } else if (window.matchMedia("(prefers-color-scheme: light)").matches) {
+        setTheme("light");
+      }
+    } catch {
+      // 무시 — 기본 다크 테마 유지
+    }
   }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
+
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    try {
+      window.localStorage.setItem("t04-theme", next);
+    } catch {
+      // 무시
+    }
+  }
 
   function saveApiKey() {
     const trimmed = apiKeyInput.trim();
@@ -313,6 +443,36 @@ export default function Home() {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, [loadLive, loadDemo, loadStats, loadNews, loadSim]);
+
+  // 포지션 보유 중엔 실거래 화면처럼 더 자주(3초) 손익을 갱신한다.
+  useEffect(() => {
+    if (!openPos) return;
+    const fast = setInterval(() => {
+      loadSim();
+    }, 3000);
+    return () => clearInterval(fast);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openPos?.id, loadSim]);
+
+  const [positionTicks, setPositionTicks] = useState<number[]>([]);
+  const openPositionIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!openPos) {
+      openPositionIdRef.current = null;
+      setPositionTicks([]);
+      return;
+    }
+    if (openPositionIdRef.current !== openPos.id) {
+      openPositionIdRef.current = openPos.id;
+      setPositionTicks(openPos.current_price != null ? [openPos.entry_price, openPos.current_price] : [openPos.entry_price]);
+      return;
+    }
+    if (openPos.current_price != null) {
+      setPositionTicks((prev) => [...prev, openPos.current_price as number].slice(-80));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openPos?.id, openPos?.current_price]);
 
   async function runFixture(id: string) {
     setDemoBusy(id);
@@ -465,14 +625,57 @@ export default function Home() {
   }
 
   const cur = live?.current;
+  const liveDisplayValue = useCountUp(cur?.normalized_value ?? null);
+  const statsDisplayPrice = useCountUp(stats?.price ?? null, 500);
+
+  const portfolioStats = useMemo(() => {
+    if (history.length === 0) return null;
+    const pnls = history.map(closedPnlAmount).filter((v): v is number => v != null);
+    const wins = pnls.filter((v) => v > 0).length;
+    const total = pnls.reduce((sum, v) => sum + v, 0);
+    return {
+      count: history.length,
+      winRatePct: pnls.length ? (wins / pnls.length) * 100 : 0,
+      totalPnl: total,
+    };
+  }, [history]);
+
+  const [activeTab, setActiveTab] = useState<(typeof TABS)[number]["id"]>("live");
 
   return (
     <main className="page">
       <header className="hero">
-        <h1>오늘의 진짜 정보판</h1>
-        <p>데이터가 안 올 때, 값을 지어내지 않고 정직하게 보여줍니다.</p>
+        <div>
+          <h1>오늘의 진짜 정보판</h1>
+          <p>데이터가 안 올 때, 값을 지어내지 않고 정직하게 보여줍니다.</p>
+        </div>
+        <button
+          type="button"
+          className="btn ghost theme-toggle"
+          onClick={toggleTheme}
+          aria-label={theme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환"}
+        >
+          {theme === "dark" ? "🌙 다크" : "☀️ 라이트"}
+        </button>
       </header>
 
+      <nav className="tabs" role="tablist" aria-label="정보판 섹션">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            id={`tab-${t.id}`}
+            aria-selected={activeTab === t.id}
+            aria-controls={`panel-${t.id}`}
+            className={`tab ${activeTab === t.id ? "active" : ""}`}
+            onClick={() => setActiveTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
+
+      <div id="panel-live" role="tabpanel" aria-labelledby="tab-live" hidden={activeTab !== "live"}>
       <Panel
         title="① 실제 정보판 (비트코인 KRW 시세)"
         subtitle="비개인 공개 원천(CoinGecko)에서 실시간 값을 조회합니다. 로그인·API 키 없음."
@@ -481,7 +684,7 @@ export default function Home() {
           <div className="live-value-row">
             <div>
               <div className="live-value">
-                {cur ? cur.normalized_value.toLocaleString("ko-KR") : "—"}
+                {liveDisplayValue != null ? Math.round(liveDisplayValue).toLocaleString("ko-KR") : "—"}
                 <span className="unit">{cur?.unit ?? ""}</span>
               </div>
               {live?.delta != null && (
@@ -521,14 +724,16 @@ export default function Home() {
         <h3 className="subhead">저장된 일별 기록</h3>
         <DailyTable rows={live?.rows ?? []} />
       </Panel>
+      </div>
 
+      <div id="panel-chart" role="tabpanel" aria-labelledby="tab-chart" hidden={activeTab !== "chart"}>
       <Panel title="② 7일 추세 & 24시간 통계" subtitle="30초마다 자동 새로고침됩니다. 그래프·통계는 채점 저장소와 분리된 참고용입니다.">
         <div className="live-card">
           <Sparkline points={stats?.sparkline7d ?? []} />
           <div className="stat-grid">
             <div className="stat-tile">
               <span className="stat-label">현재가</span>
-              <span className="stat-value">{fmtKrw(stats?.price)} KRW</span>
+              <span className="stat-value">{fmtKrw(statsDisplayPrice != null ? Math.round(statsDisplayPrice) : null)} KRW</span>
             </div>
             <div className={`stat-tile ${stats && stats.change24hPct >= 0 ? "up" : "down"}`}>
               <span className="stat-label">24시간 변동</span>
@@ -555,7 +760,9 @@ export default function Home() {
           </div>
         </div>
       </Panel>
+      </div>
 
+      <div id="panel-news" role="tabpanel" aria-labelledby="tab-news" hidden={activeTab !== "news"}>
       <Panel title="③ 실시간 이슈" subtitle="비트코인 관련 최신 뉴스 (Google 뉴스 RSS, 비개인 공개 원천)">
         {news.length === 0 ? (
           <p className="empty">뉴스를 불러오는 중이거나 아직 없습니다.</p>
@@ -574,7 +781,9 @@ export default function Home() {
           </ul>
         )}
       </Panel>
+      </div>
 
+      <div id="panel-sim" role="tabpanel" aria-labelledby="tab-sim" hidden={activeTab !== "sim"}>
       <Panel title="④ AI 모의투자 시뮬레이터 (오락용)" subtitle="가상 자금(1,000,000 KRW 단위)으로만 노는 게임입니다. 실제 투자 조언이 아니며 실제 거래는 없습니다.">
         <div className="disclaimer">
           ⚠ 이 섹션은 재미를 위한 시뮬레이션입니다. AI 추천은 실제 금융 조언이 아니며, 실제 자금 거래를 발생시키지 않습니다.
@@ -590,8 +799,13 @@ export default function Home() {
             </>
           ) : (
             <>
+              <label htmlFor="openai-key-input" className="sr-only">
+                OpenAI API 키 (선택, 내 브라우저에만 저장됨)
+              </label>
               <input
+                id="openai-key-input"
                 type="password"
+                autoComplete="off"
                 placeholder="OpenAI API 키 (sk-... , 내 브라우저에만 저장됨)"
                 value={apiKeyInput}
                 onChange={(e) => setApiKeyInput(e.target.value)}
@@ -613,7 +827,12 @@ export default function Home() {
                   <span className="unit"> 진입가 {fmtKrw(openPos.entry_price)}</span>
                 </div>
                 {openPos.pnl_amount != null && (
-                  <div className={`delta ${openPos.pnl_amount >= 0 ? "up" : "down"}`}>
+                  <div
+                    key={Math.round(openPos.pnl_amount)}
+                    className={`delta pulse ${openPos.pnl_amount >= 0 ? "up" : "down"}`}
+                    role="status"
+                    aria-live="polite"
+                  >
                     손익 {openPos.pnl_amount >= 0 ? "+" : ""}
                     {fmtKrw(Math.round(openPos.pnl_amount))} KRW ({openPos.pnl_pct?.toFixed(2)}%)
                   </div>
@@ -621,6 +840,7 @@ export default function Home() {
               </div>
               <span className="badge badge-fresh pulse">포지션 보유 중</span>
             </div>
+            <LivePositionChart points={positionTicks} entryPrice={openPos.entry_price} direction={openPos.direction} />
             <dl className="meta-grid">
               <dt>현재가</dt>
               <dd className="mono">{fmtKrw(openPos.current_price)} KRW</dd>
@@ -668,11 +888,21 @@ export default function Home() {
 
             <h3 className="subhead">직접 진입</h3>
             <div className="manual-entry">
-              <select value={manualDirection} onChange={(e) => setManualDirection(e.target.value as "long" | "short")}>
+              <label htmlFor="manual-direction" className="sr-only">
+                방향
+              </label>
+              <select
+                id="manual-direction"
+                value={manualDirection}
+                onChange={(e) => setManualDirection(e.target.value as "long" | "short")}
+              >
                 <option value="long">롱(상승 베팅)</option>
                 <option value="short">숏(하락 베팅)</option>
               </select>
-              <select value={manualLeverage} onChange={(e) => setManualLeverage(Number(e.target.value))}>
+              <label htmlFor="manual-leverage" className="sr-only">
+                레버리지
+              </label>
+              <select id="manual-leverage" value={manualLeverage} onChange={(e) => setManualLeverage(Number(e.target.value))}>
                 {LEVERAGE_CHOICES.map((l) => (
                   <option key={l} value={l}>
                     {l}배
@@ -688,6 +918,26 @@ export default function Home() {
               </button>
             </div>
           </>
+        )}
+
+        {portfolioStats && (
+          <div className="stat-grid sim-summary">
+            <div className="stat-tile">
+              <span className="stat-label">누적 거래</span>
+              <span className="stat-value">{portfolioStats.count}건</span>
+            </div>
+            <div className="stat-tile">
+              <span className="stat-label">승률</span>
+              <span className="stat-value">{portfolioStats.winRatePct.toFixed(0)}%</span>
+            </div>
+            <div className={`stat-tile ${portfolioStats.totalPnl >= 0 ? "up" : "down"}`}>
+              <span className="stat-label">누적 손익</span>
+              <span className="stat-value">
+                {portfolioStats.totalPnl >= 0 ? "+" : ""}
+                {fmtKrw(Math.round(portfolioStats.totalPnl))} KRW
+              </span>
+            </div>
+          </div>
         )}
 
         <h3 className="subhead">청산·종료 기록</h3>
@@ -724,7 +974,9 @@ export default function Home() {
           </div>
         )}
       </Panel>
+      </div>
 
+      <div id="panel-demo" role="tabpanel" aria-labelledby="tab-demo" hidden={activeTab !== "demo"}>
       <Panel
         title="⑤ 합성 재생 데모 (채점용)"
         subtitle="아래 버튼은 합성 시험값만 사용합니다. 실제 정보판 데이터와 분리되어 있습니다."
@@ -763,6 +1015,7 @@ export default function Home() {
         <h3 className="subhead">데모 일별 기록</h3>
         <DailyTable rows={demo?.rows ?? []} />
       </Panel>
+      </div>
 
       <footer className="footer">
         <a href="/api/receipts">제출정보.json (과정영수증) 보기</a>

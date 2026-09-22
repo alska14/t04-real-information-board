@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
-:root {
+:root,
+:root[data-theme="dark"] {
   --bg: #0b0f14;
   --panel: #121821;
   --panel-2: #171f2b;
@@ -13,6 +14,34 @@
   --error: #f87171;
 }
 
+:root[data-theme="light"] {
+  --bg: #f6f8fb;
+  --panel: #ffffff;
+  --panel-2: #eef2f7;
+  --border: #d7dee6;
+  --text: #10161f;
+  --text-dim: #4c5867;
+  --accent: #1d5fd6;
+  --fresh: #067a55;
+  --stale: #9a5b00;
+  --error: #c92c2c;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f8fb;
+    --panel: #ffffff;
+    --panel-2: #eef2f7;
+    --border: #d7dee6;
+    --text: #10161f;
+    --text-dim: #4c5867;
+    --accent: #1d5fd6;
+    --fresh: #067a55;
+    --stale: #9a5b00;
+    --error: #c92c2c;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -23,10 +52,28 @@ body {
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", sans-serif;
   margin: 0;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 body {
   min-height: 100dvh;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 ::selection {
@@ -44,6 +91,18 @@ body {
   width: 100%;
 }
 
+.hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.theme-toggle {
+  flex-shrink: 0;
+}
+
 .hero h1 {
   font-size: clamp(1.5rem, 4vw, 2rem);
   margin: 0 0 4px;
@@ -54,6 +113,36 @@ body {
   color: var(--text-dim);
   margin: 0;
   font-size: 0.95rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  min-height: 44px;
+  padding: 0 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
 
 .panel {
@@ -304,6 +393,11 @@ tbody tr:last-child td {
   display: block;
 }
 
+.sparkline-sm {
+  height: 90px;
+  margin: 4px 0 10px;
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -471,4 +565,8 @@ tbody tr:last-child td {
 
 .down {
   color: var(--error);
+}
+
+.sim-summary {
+  margin: 4px 0 20px;
 }
