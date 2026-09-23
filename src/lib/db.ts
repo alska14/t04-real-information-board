@@ -88,6 +88,20 @@ export function ensureSchema(): Promise<void> {
       `;
       await sql`INSERT INTO sim_wallet (id, balance) VALUES (1, 10000000) ON CONFLICT (id) DO NOTHING`;
       await sql`
+        CREATE TABLE IF NOT EXISTS market_cache (
+          id integer PRIMARY KEY DEFAULT 1,
+          price double precision NOT NULL,
+          change_24h_pct double precision NOT NULL,
+          high_24h double precision NOT NULL,
+          low_24h double precision NOT NULL,
+          volume_24h double precision NOT NULL,
+          market_cap double precision NOT NULL,
+          sparkline_7d jsonb NOT NULL,
+          source_updated_at text NOT NULL,
+          cached_at timestamptz NOT NULL DEFAULT now()
+        )
+      `;
+      await sql`
         CREATE TABLE IF NOT EXISTS sim_settings (
           id integer PRIMARY KEY DEFAULT 1,
           auto_trading_enabled boolean NOT NULL DEFAULT false,
@@ -368,6 +382,57 @@ export async function getWalletBalance(): Promise<number> {
   await ensureSchema();
   const rows = (await sql`SELECT balance FROM sim_wallet WHERE id = 1`) as unknown as { balance: number }[];
   return rows[0]?.balance ?? 0;
+}
+
+export interface MarketCacheRow {
+  price: number;
+  change_24h_pct: number;
+  high_24h: number;
+  low_24h: number;
+  volume_24h: number;
+  market_cap: number;
+  sparkline_7d: number[];
+  source_updated_at: string;
+  cached_at: string;
+}
+
+// CoinGecko 무료 API의 호출 제한(429)을 피하려고 서버 인스턴스 전체가 공유하는
+// DB 캐시. 인메모리 캐시는 서버리스 인스턴스마다 따로 놀아서 효과가 없었다.
+export async function getMarketCache(): Promise<MarketCacheRow | null> {
+  await ensureSchema();
+  const rows = (await sql`SELECT * FROM market_cache WHERE id = 1`) as unknown as MarketCacheRow[];
+  return rows[0] ?? null;
+}
+
+export async function setMarketCache(data: {
+  price: number;
+  change24hPct: number;
+  high24h: number;
+  low24h: number;
+  volume24h: number;
+  marketCap: number;
+  sparkline7d: number[];
+  sourceUpdatedAt: string;
+}): Promise<void> {
+  await ensureSchema();
+  await sql`
+    INSERT INTO market_cache (
+      id, price, change_24h_pct, high_24h, low_24h, volume_24h, market_cap, sparkline_7d, source_updated_at, cached_at
+    ) VALUES (
+      1, ${data.price}, ${data.change24hPct}, ${data.high24h}, ${data.low24h}, ${data.volume24h}, ${data.marketCap},
+      ${JSON.stringify(data.sparkline7d)}, ${data.sourceUpdatedAt}, now()
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      price = EXCLUDED.price,
+      change_24h_pct = EXCLUDED.change_24h_pct,
+      high_24h = EXCLUDED.high_24h,
+      low_24h = EXCLUDED.low_24h,
+      volume_24h = EXCLUDED.volume_24h,
+      market_cap = EXCLUDED.market_cap,
+      sparkline_7d = EXCLUDED.sparkline_7d,
+      source_updated_at = EXCLUDED.source_updated_at,
+      cached_at = now()
+  `;
 }
 
 export async function openPosition(

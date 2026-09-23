@@ -708,7 +708,9 @@ export default function Home() {
     };
   }, [loadLive, loadDemo, loadStats, loadNews, loadSim, loadSettings, loadDecisionLog]);
 
-  // 포지션이 하나라도 열려 있거나 자동매매가 켜져 있으면 실거래 화면처럼 더 자주(3초) 갱신한다.
+  // 포지션이 하나라도 열려 있거나 자동매매가 켜져 있으면 더 자주 갱신한다.
+  // CoinGecko 무료 API 호출 제한을 피하려고 서버 DB 캐시가 20초 단위라, 그보다 촘촘히
+  // 돌아봤자 새 값은 없이 요청 수만 늘어난다 — 캐시 주기에 맞춰 10초로 완화.
   const hasOpenPosition = openPositions.length > 0;
   const autoTradingOn = settings?.auto_trading_enabled ?? false;
   useEffect(() => {
@@ -716,7 +718,7 @@ export default function Home() {
     const fast = setInterval(() => {
       loadSim();
       loadDecisionLog();
-    }, 3000);
+    }, 10_000);
     return () => clearInterval(fast);
   }, [hasOpenPosition, autoTradingOn, loadSim, loadDecisionLog]);
 
